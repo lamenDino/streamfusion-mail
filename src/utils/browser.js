@@ -49,41 +49,20 @@ async function launchBrowser() {
   if (browserlessUrl) {
     log.info('connecting to remote Chrome via BROWSERLESS_URL');
     try {
-      // Build the WebSocket endpoint with:
-      //   - stealth=true → Browserless launches Chrome with anti-detection flags server-side
-      //                     (--disable-blink-features=AutomationControlled, etc.)
-      //   - proxy-server → route via residential proxy to bypass datacenter IP blocks (Cloudflare)
-      let wsEndpoint = browserlessUrl;
-      const sep = () => wsEndpoint.includes('?') ? '&' : '?';
-
-      // Add server-side stealth (Browserless.io parameter)
-      wsEndpoint += `${sep()}stealth=true`;
-
-      // Add residential proxy if PROXY_URL is set
-      const proxyUrl = (process.env.PROXY_URL || '').trim();
-      if (proxyUrl) {
-        try {
-          const u = new URL(proxyUrl);
-          const proxyServer = `${u.hostname}:${u.port}`;
-          const launchArgs = JSON.stringify({
-            args: [
-              `--proxy-server=${proxyServer}`,
-              '--disable-blink-features=AutomationControlled',
-            ],
-          });
-          wsEndpoint += `${sep()}launch=${encodeURIComponent(launchArgs)}`;
-          log.info(`browser: stealth=true + proxy=${proxyServer}`);
-        } catch (_) { /* ignore malformed PROXY_URL */ }
-      }
-
+      // Connect using puppeteerExtra (not puppeteer-core) so the Stealth plugin
+      // applies its JS-based evasions (evaluateOnNewDocument) to each new page.
+      // These evasions hide navigator.webdriver, fake chrome.runtime, etc.
+      // Launch-time Chrome flags (--disable-blink-features) are NOT applied via connect(),
+      // but JS evasions are the most effective against Cloudflare anyway.
       const browser = await puppeteerExtra.connect({
-        browserWSEndpoint: wsEndpoint,
+        browserWSEndpoint: browserlessUrl,
         defaultViewport: { width: 1280, height: 720 },
       });
-      log.debug('connected to remote Chrome (server-side stealth)');
+      log.debug('connected to remote Chrome');
       return browser;
     } catch (err) {
       log.error(`remote Chrome connection failed: ${err.message}`);
+
 
       throw err;
     }
