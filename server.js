@@ -149,6 +149,43 @@ app.get('/debug/providers', async (req, res) => {
   res.json(result);
 });
 
+app.get('/debug/browser', async (req, res) => {
+  const { launchBrowser } = require('./src/utils/browser');
+  const result = {
+    BROWSERLESS_URL: (process.env.BROWSERLESS_URL || '').trim().slice(0, 60) || null,
+    PROXY_URL: (process.env.PROXY_URL || '').trim().slice(0, 40) || null,
+  };
+  const t0 = Date.now();
+  try {
+    const browser = await launchBrowser();
+    const version = await browser.version().catch(() => '?');
+    result.connected = true;
+    result.version = version;
+    result.connectMs = Date.now() - t0;
+
+    // Try navigating to kisskh
+    const page = await browser.newPage();
+    const proxyUrl = (process.env.PROXY_URL || '').trim();
+    if (proxyUrl) {
+      try {
+        const u = new URL(proxyUrl);
+        if (u.username) await page.authenticate({ username: u.username, password: u.password });
+      } catch (_) {}
+    }
+    await page.goto('https://kisskh.co/', { waitUntil: 'load', timeout: 15000 }).catch(() => {});
+    result.kisskhUrl = page.url();
+    result.kisskhTitle = await page.title().catch(() => '?');
+    await browser.close();
+    result.totalMs = Date.now() - t0;
+    res.json(result);
+  } catch (err) {
+    result.connected = false;
+    result.error = err.message;
+    result.ms = Date.now() - t0;
+    res.json(result);
+  }
+});
+
 // ─── Landing Page ─────────────────────────────────────────────────────────────
 
 app.get('/', (req, res) => {
