@@ -19,6 +19,7 @@ const { getCloudflareCookie } = require('../utils/cloudflare');
 const { decryptKisskhSubtitleFull, decryptKisskhSubtitleStatic } = require('../utils/subDecrypter');
 const { TTLCache } = require('../utils/cache');
 const { cleanTitleForSearch, titleSimilarity, extractEpisodeNumericId } = require('../utils/titleHelper');
+const { withTimeout } = require('../utils/fetcher');
 const { createLogger } = require('../utils/logger');
 
 const log = createLogger('kisskh');
@@ -33,15 +34,46 @@ const subCache     = new TTLCache({ ttl: 24 * 60 * 60_000, maxSize: 500 });
 
 // ─── Shared axios headers ─────────────────────────────────────────────────────
 
-async function _headers() {
-  const cookie = await getCloudflareCookie().catch(() => '');
+/** Base headers without CF cookie — fast, no Puppeteer */
+function _baseHeaders() {
   return {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     'Accept': 'application/json, text/plain, */*',
     'Referer': SITE_BASE + '/',
     'Origin': SITE_BASE,
-    ...(cookie ? { 'Cookie': cookie } : {}),
   };
+}
+
+/** Full headers with CF cookie — slow, used only when base headers get 403 */
+async function _headers() {
+  const cookie = await withTimeout(getCloudflareCookie(), 5_000, 'cf-cookie').catch(() => '');
+  return { ..._baseHeaders(), ...(cookie ? { 'Cookie': cookie } : {}) };
+}
+
+/**
+ * GET helper: tries without CF cookie first, retries with CF cookie on 403.
+ * @param {string} url
+ * @param {number} [timeout=10000]
+ * @returns {Promise<any|null>}
+ */
+async function _apiGet(url, timeout = 10_000) {
+  try {
+    const { data } = await axios.get(url, { headers: _baseHeaders(), timeout });
+    return data;
+  } catch (err) {
+    const status = err?.response?.status;
+    log.warn(`API call failed (${status}) without CF cookie, retrying with cookie`, { url });
+    if (status !== 403 && status !== 503 && status !== 429) return null;
+    // Retry with CF cookie
+    try {
+      const headers = await _headers();
+      const { data } = await axios.get(url, { headers, timeout });
+      return data;
+    } catch (err2) {
+      log.error(`API call failed even with CF cookie: ${err2.message}`, { url });
+      return null;
+    }
+  }
 }
 
 // ─── Catalog ─────────────────────────────────────────────────────────────────
@@ -70,16 +102,10 @@ async function getCatalog(skip = 0, search = '') {
 
 async function _listCatalog(page, limit) {
   const url = `${API_BASE}/DramaList/List?page=${page}&type=1&sub=0&country=2&status=2&order=3&pageSize=${limit}`;
-  const headers = await _headers();
   log.info('list catalog', { url });
-  try {
-    const { data } = await axios.get(url, { headers, timeout: 10_000 });
-    if (!data || !data.data) return [];
-    return data.data.map(_mapItem);
-  } catch (err) {
-    log.error(`list catalog failed: ${err.message}`);
-    return [];
-  }
+  const data = await _apiGet(url);
+  if (!data || !data.data) return [];
+  return data.data.map(_mapItem);
 }
 
 async function _searchCatalog(query, limit = 20) {
@@ -91,9 +117,8 @@ async function _searchCatalog(query, limit = 20) {
 
   while (allResults.length < limit && currentPage <= maxPages && emptyPages < 3) {
     const url = `${API_BASE}/DramaList/List?page=${currentPage}&type=1&sub=0&country=2&status=2&order=3&pageSize=30&search=${encodeURIComponent(query)}`;
-    const headers = await _headers();
     try {
-      const { data } = await axios.get(url, { headers, timeout: 10_000 });
+      const data = await _apiGet(url);
       if (!data || !data.data || !data.data.length) { emptyPages++; currentPage++; continue; }
 
       const pageItems = data.data
@@ -145,9 +170,8 @@ async function getMeta(id) {
   const url = `${API_BASE}/DramaList/Drama/${serieId}?isq=false`;
   log.info('fetching meta', { id, url });
 
-  const headers = await _headers();
   try {
-    const { data } = await axios.get(url, { headers, timeout: 10_000 });
+    const data = await _apiGet(url);
     if (!data) return { meta: null };
 
     const meta = {
