@@ -100,20 +100,23 @@ async function getCatalog(skip = 0, search = '', config = {}) {
  * @returns {Promise<{meta: object}>}
  */
 async function getMeta(id, config = {}) {
-  const cached = metaCache.get(id);
+  // Strip episode part from composite IDs like "rama_my-drama:episodio-1"
+  const seriesId = id.includes(':') ? id.split(':')[0] : id;
+
+  const cached = metaCache.get(seriesId);
   if (cached) {
-    log.debug('meta from cache', { id });
+    log.debug('meta from cache', { id: seriesId });
     return { meta: cached };
   }
 
-  const baseId = extractBaseSlug(id.replace(/^rama_/, ''));
+  const baseId = extractBaseSlug(seriesId.replace(/^rama_/, ''));
   const seriesUrl = `${BASE_URL}/drama/${baseId}/`;
   log.info('fetching meta', { id, seriesUrl });
 
   const html = await fetchWithCloudscraper(seriesUrl, { referer: BASE_URL, proxyUrl: config.proxyUrl });
   if (!html) {
     log.warn('meta fetch returned null', { id });
-    return { meta: _emptyMeta(id) };
+    return { meta: _emptyMeta(seriesId) };
   }
 
   const $ = cheerio.load(html);
@@ -152,7 +155,7 @@ async function getMeta(id, config = {}) {
   if (yearMatch) year = yearMatch[0];
 
   const meta = {
-    id,
+    id: seriesId,
     type: 'kdrama',
     name,
     poster,
@@ -165,7 +168,18 @@ async function getMeta(id, config = {}) {
 
   // Fetch episodes and embed in meta for stream handler
   meta.episodes = await _getEpisodes(seriesUrl, $, baseId, year);
-  metaCache.set(id, meta);
+
+  // Map to Stremio videos format
+  meta.videos = meta.episodes.map((ep, idx) => ({
+    id: `${seriesId}:${ep.id}`,
+    title: ep.title,
+    season: 1,
+    number: idx + 1,
+    thumbnail: ep.thumbnail || '',
+    released: new Date(0).toISOString(),
+  }));
+
+  metaCache.set(seriesId, meta);
   return { meta };
 }
 
@@ -176,30 +190,55 @@ async function getMeta(id, config = {}) {
  * @returns {Promise<Array>}
  */
 async function getStreams(id, config = {}) {
-  const cached = streamCache.get(id);
+  // id can be 'rama_my-drama' (series) or 'rama_my-drama:episodio-3' (specific episode)
+  const colonIdx = id.indexOf(':');
+  const seriesId  = colonIdx !== -1 ? id.slice(0, colonIdx) : id;
+  const episodeId = colonIdx !== -1 ? id.slice(colonIdx + 1) : null;
+
+  // Cache key includes episode so different episodes don't collide
+  const cacheKey = episodeId ? `${seriesId}:${episodeId}` : seriesId;
+  const cached = streamCache.get(cacheKey);
   if (cached) {
-    log.debug('streams from cache', { id });
-    // Wrap raw cached URLs with MFP per-request
+    log.debug('streams from cache', { cacheKey });
     return cached.map(s => ({ ...s, url: wrapStreamUrl(s.url, config) }));
   }
 
-  const { meta } = await getMeta(id, config);
+  const { meta } = await getMeta(seriesId, config);
   if (!meta || !meta.episodes || !meta.episodes.length) {
     log.warn('no episodes found for streams', { id });
     return [];
   }
 
-  // Store raw (unwrapped) URLs in cache
-  const rawStreams = meta.episodes.flatMap(ep =>
-    ep.streams.map(s => ({
-      name: 'Rama',
-      title: `${ep.title} — ${s.title}`,
-      url: s.url,
-      behaviorHints: { bingeGroup: `streamfusion-rama-${id}` },
-    }))
-  );
+  // Find the specific episode requested (if episodeId given)
+  const episodes = episodeId
+    ? meta.episodes.filter(ep => ep.id === episodeId)
+    : meta.episodes;
 
-  streamCache.set(id, rawStreams);
+  if (!episodes.length) {
+    log.warn('episode not found in meta', { episodeId, available: meta.episodes.map(e => e.id) });
+    return [];
+  }
+
+  // Fetch stream URLs lazily — only for the episode(s) we need
+  const rawStreams = [];
+  for (const ep of episodes) {
+    const streamUrl = await _getStreamFromEpisodePage(ep.link);
+    if (streamUrl) {
+      rawStreams.push({
+        name: 'Rama',
+        title: ep.title,
+        url: streamUrl,
+        behaviorHints: { bingeGroup: `streamfusion-rama-${seriesId}` },
+      });
+    }
+  }
+
+  if (!rawStreams.length) {
+    log.warn('no stream URLs found', { id });
+    return [];
+  }
+
+  streamCache.set(cacheKey, rawStreams);
   return rawStreams.map(s => ({ ...s, url: wrapStreamUrl(s.url, config) }));
 }
 
@@ -221,13 +260,12 @@ async function _getEpisodes(seriesUrl, $, seriesId, year) {
       ? `${BASE_URL}/watch/${seriesId}-${year}-episodio-${epNum}/`
       : `${BASE_URL}/watch/${seriesId}-episodio-${epNum}/`;
 
-    const streamUrl = await _getStreamFromEpisodePage(episodeLink);
-
+    // Store the episode link — stream URL is fetched lazily in getStreams
     episodes.push({
       id: `episodio-${epNum}`,
       title: `Episodio ${epNum}`,
       thumbnail,
-      streams: [{ title: `Episodio ${epNum}`, url: streamUrl || episodeLink }],
+      link: episodeLink,
     });
   }
 
