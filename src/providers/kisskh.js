@@ -21,6 +21,7 @@ const { TTLCache } = require('../utils/cache');
 const { cleanTitleForSearch, titleSimilarity, extractEpisodeNumericId } = require('../utils/titleHelper');
 const { withTimeout, makeProxyAgent, getProxyAgent } = require('../utils/fetcher');
 const { wrapStreamUrl } = require('../utils/mediaflow');
+const { flareSolverrGetJSON, getFlareSolverrUrl } = require('../utils/flaresolverr');
 const { createLogger } = require('../utils/logger');
 
 const log = createLogger('kisskh');
@@ -278,8 +279,12 @@ async function getStreams(stremioId, config = {}) {
 // ─── Direct API stream extraction (no browser) ────────────────────────────────
 
 /**
- * Attempts to get the KissKH stream URL directly via their API,
- * using the cf_clearance cookie from the environment variable.
+ * Attempts to get the KissKH stream URL directly via their API.
+ *
+ * Priority:
+ *   1. FlareSolverr (FLARESOLVERR_URL) — real Chromium, bypasses CF Bot Management
+ *   2. Direct axios + cf_clearance cookie (CF_CLEARANCE_KISSKH) — works only if IP
+ *      region matches the cookie's origin; quick attempt, fails silently
  *
  * KissKH episode API:
  *   GET /api/DramaList/Episode/{id}?type=<1|2>&sub=0&source=<0|1>&quality=auto
@@ -288,41 +293,65 @@ async function getStreams(stremioId, config = {}) {
  * @returns {Promise<{streamUrl:string, subApiUrl:string|null}|null>}
  */
 async function _fetchStreamViaApi(serieId, episodeId, proxyUrl) {
+  const _parseVideoData = (data) => {
+    const videoUrl = data?.Video || data?.video || data?.url || data?.stream;
+    if (videoUrl && typeof videoUrl === 'string' && videoUrl.startsWith('http')) {
+      return { streamUrl: videoUrl, subApiUrl: `${API_BASE}/Sub/${episodeId}` };
+    }
+    return null;
+  };
+
+  // ── 1. FlareSolverr ──────────────────────────────────────────────────────
+  if (getFlareSolverrUrl()) {
+    for (const [type, source] of [[2, 1], [1, 0]]) {
+      const url = `${API_BASE}/DramaList/Episode/${episodeId}?type=${type}&sub=0&source=${source}&quality=auto`;
+      log.info(`FlareSolverr stream API type=${type} source=${source}`, { episodeId });
+      const data = await flareSolverrGetJSON(url);
+      const result = data ? _parseVideoData(data) : null;
+      if (result) {
+        log.info(`FlareSolverr stream found (type=${type},source=${source})`, { episodeId, url: result.streamUrl.slice(0, 80) });
+        return result;
+      }
+    }
+    log.warn('FlareSolverr: no stream URL found', { episodeId });
+    // Don't fall through to cookie attempt — both use the same API endpoints
+    return null;
+  }
+
+  // ── 2. Direct axios + cf_clearance cookie ────────────────────────────────
   const cfClearance = (process.env.CF_CLEARANCE_KISSKH || '').trim();
   if (!cfClearance) {
-    log.debug('CF_CLEARANCE_KISSKH not set, cannot use direct API');
+    log.debug('No FLARESOLVERR_URL and no CF_CLEARANCE_KISSKH — cannot bypass CF');
     return null;
   }
 
   const cookieVal = cfClearance.startsWith('cf_clearance=') ? cfClearance : `cf_clearance=${cfClearance}`;
-  const headers = {
-    ..._baseHeaders(),
-    'Cookie': cookieVal,
-  };
-
+  const headers = { ..._baseHeaders(), 'Cookie': cookieVal };
   const proxyAgent = proxyUrl ? makeProxyAgent(proxyUrl) : getProxyAgent();
   const proxyConfig = proxyAgent ? { httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false } : {};
 
-  // Try type=2 first (usually external CDN), then type=1 (internal)
   for (const [type, source] of [[2, 1], [1, 0], [2, 0], [1, 1]]) {
     const url = `${API_BASE}/DramaList/Episode/${episodeId}?type=${type}&sub=0&source=${source}&quality=auto`;
     try {
-      log.debug(`direct API try type=${type} source=${source}`, { episodeId });
+      log.debug(`cookie API try type=${type} source=${source}`, { episodeId });
       const { data } = await axios.get(url, { headers, timeout: 8_000, ...proxyConfig });
-      const videoUrl = data?.Video || data?.video || data?.url || data?.stream;
-      if (videoUrl && videoUrl.includes('http')) {
-        log.info(`direct API stream found (type=${type},source=${source})`, { episodeId, url: videoUrl.slice(0, 80) });
-        // Subtitle URL: same pattern as browser-intercepted /api/Sub/<episodeId>
-        const subApiUrl = `${API_BASE}/Sub/${episodeId}`;
-        return { streamUrl: videoUrl, subApiUrl };
+      // Detect CF HTML response (cookie from different client/fingerprint)
+      if (typeof data === 'string' && (data.includes('<html') || data.includes('Just a moment'))) {
+        log.debug(`cookie API: CF challenge returned for type=${type}`);
+        break; // All combos will fail the same way
+      }
+      const result = _parseVideoData(data);
+      if (result) {
+        log.info(`cookie API stream found (type=${type},source=${source})`, { episodeId, url: result.streamUrl.slice(0, 80) });
+        return result;
       }
     } catch (err) {
       const status = err?.response?.status;
-      log.debug(`direct API type=${type} source=${source} failed: ${status ?? err.message}`);
+      log.debug(`cookie API type=${type} source=${source} failed: ${status ?? err.message}`);
     }
   }
 
-  log.warn('direct API: no stream URL found in any type/source combo', { episodeId });
+  log.warn('cookie API: no stream URL found', { episodeId });
   return null;
 }
 

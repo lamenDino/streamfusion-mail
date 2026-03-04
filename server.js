@@ -178,6 +178,44 @@ app.get('/debug/providers', async (req, res) => {
   res.json(result);
 });
 
+app.get('/debug/flaresolverr', async (req, res) => {
+  const { flareSolverrGetJSON, getFlareSolverrUrl } = require('./src/utils/flaresolverr');
+  const url = getFlareSolverrUrl();
+  const result = { FLARESOLVERR_URL: url ? url.slice(0, 60) : null, configured: !!url };
+  if (!url) return res.json(result);
+
+  const t0 = Date.now();
+  // Test 1: FlareSolverr /health endpoint
+  try {
+    const axios = require('axios');
+    const health = await axios.get(url.replace(/\/$/, '') + '/health', { timeout: 8000 });
+    result.health = { status: health.data?.status, ms: Date.now() - t0 };
+  } catch (err) {
+    result.health = { error: err.message, ms: Date.now() - t0 };
+  }
+
+  // Test 2: KissKH episode API through FlareSolverr
+  const t1 = Date.now();
+  const testEpId = req.query.ep || '202614'; // default: Ep1 of series 12203
+  try {
+    const data = await flareSolverrGetJSON(
+      `https://kisskh.co/api/DramaList/Episode/${testEpId}?type=2&sub=0&source=1&quality=auto`
+    );
+    result.kisskhEpisodeApi = {
+      episodeId: testEpId,
+      gotJSON: !!data,
+      hasVideo: !!(data?.Video || data?.video),
+      videoPreview: data?.Video ? String(data.Video).slice(0, 80) : null,
+      ms: Date.now() - t1,
+    };
+  } catch (err) {
+    result.kisskhEpisodeApi = { error: err.message, ms: Date.now() - t1 };
+  }
+
+  result.totalMs = Date.now() - t0;
+  res.json(result);
+});
+
 app.get('/debug/browser', async (req, res) => {
   const { launchBrowser } = require('./src/utils/browser');
   const cfClearance = (process.env.CF_CLEARANCE_KISSKH || '').trim();
@@ -243,6 +281,7 @@ function _serverStatus() {
   return {
     proxyOk: !!(process.env.PROXY_URL || '').trim(),
     blOk:    !!(process.env.BROWSERLESS_URL || '').trim(),
+    fsOk:    !!(process.env.FLARESOLVERR_URL || '').trim(),
   };
 }
 
@@ -261,7 +300,7 @@ function esc(s) {
 
 function buildPage(host, prefill, existingCfgStr, serverStatus) {
   const f = prefill || {};
-  const { proxyOk = false, blOk = false } = serverStatus || {};
+  const { proxyOk = false, blOk = false, fsOk = false } = serverStatus || {};
   const v = manifest.version;
   const addonHost = host.replace(/^https?:\/\//, '');
   return `<!DOCTYPE html>
@@ -336,13 +375,14 @@ Configura il proxy per sbloccare i contenuti da Vercel.</p>
   <div style="display:flex;gap:10px;flex-wrap:wrap;font-size:.82rem">
     <span style="color:${proxyOk?'#34d399':'#f87171'}">${proxyOk?'✅':'❌'} HTTP Proxy ${proxyOk?'configurato':'non configurato'}</span>
     <span style="color:${blOk?'#34d399':'#f87171'}">${blOk?'✅':'❌'} Browserless ${blOk?'configurato':'non configurato'}</span>
+    <span style="color:${fsOk?'#34d399':'#f59e0b'}">${fsOk?'✅':'⚠️'} FlareSolverr ${fsOk?'configurato':'non configurato'}</span>
   </div>
-  ${!blOk ? `<p style="font-size:.78rem;color:#f59e0b;margin-top:10px;line-height:1.5">
-    ⚠️ <b>KissKH streams non funzioneranno senza Browserless.</b><br/>
-    Registrati su <a href="https://www.browserless.io/" target="_blank" style="color:var(--accent-light)">browserless.io</a>
-    (free tier), copia il tuo URL WebSocket e impostalo su Vercel:<br/>
-    <code style="background:#1c1c26;padding:2px 6px;border-radius:3px">vercel env add BROWSERLESS_URL production</code><br/>
-    Formato: <code style="background:#1c1c26;padding:2px 6px;border-radius:3px">wss://chrome.browserless.io?token=TUO_TOKEN</code>
+  ${!fsOk ? `<p style="font-size:.78rem;color:#f59e0b;margin-top:10px;line-height:1.5">
+    ⚠️ <b>KissKH streams richiedono FlareSolverr per bypassare Cloudflare.</b><br/>
+    Deploya <a href="https://github.com/FlareSolverr/FlareSolverr" target="_blank" style="color:var(--accent-light)">FlareSolverr</a>
+    su Koyeb (free tier, immagine Docker <code style="background:#1c1c26;padding:2px 6px;border-radius:3px">ghcr.io/flaresolverr/flaresolverr:latest</code>, porta 8191),
+    poi imposta su Vercel:<br/>
+    <code style="background:#1c1c26;padding:2px 6px;border-radius:3px">FLARESOLVERR_URL=https://tuo-servizio.koyeb.app</code>
   </p>` : ''}
 </div>
 
