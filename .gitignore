@@ -1,5 +1,6 @@
 node_modules/
 .env
+stack.env
 data/
 cache/
 *.log
