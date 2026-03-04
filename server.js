@@ -153,7 +153,7 @@ app.get('/debug/providers', async (req, res) => {
 
 app.get('/', (req, res) => {
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.send(buildPage(req.protocol + '://' + req.get('host')));
+  res.send(buildPage(req.protocol + '://' + req.get('host'), null, null, _serverStatus()));
 });
 
 // Config-prefixed landing — shows pre-filled form with existing config
@@ -161,8 +161,15 @@ app.get('/:config', (req, res, next) => {
   if (!isValidConfig(req.params.config)) return next();
   const cfg = decodeConfig(req.params.config);
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.send(buildPage(req.protocol + '://' + req.get('host'), cfg, req.params.config));
+  res.send(buildPage(req.protocol + '://' + req.get('host'), cfg, req.params.config, _serverStatus()));
 });
+
+function _serverStatus() {
+  return {
+    proxyOk: !!(process.env.PROXY_URL || '').trim(),
+    blOk:    !!(process.env.BROWSERLESS_URL || '').trim(),
+  };
+}
 
 // 404
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
@@ -177,8 +184,9 @@ function esc(s) {
   return String(s || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
 }
 
-function buildPage(host, prefill, existingCfgStr) {
+function buildPage(host, prefill, existingCfgStr, serverStatus) {
   const f = prefill || {};
+  const { proxyOk = false, blOk = false } = serverStatus || {};
   const v = manifest.version;
   const addonHost = host.replace(/^https?:\/\//, '');
   return `<!DOCTYPE html>
@@ -239,6 +247,21 @@ Configura il proxy per sbloccare i contenuti da Vercel.</p>
 <div class="providers">
   <div class="ptag">🇰🇷 <b>KissKH</b> Asian Drama</div>
   <div class="ptag">🎞 <b>Rama</b> Korean Fansub</div>
+</div>
+
+<div class="card" style="border-color:${proxyOk?'#34d399':'#f87171'}">
+  <div class="card-title">⚙️ Server Status</div>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;font-size:.82rem">
+    <span style="color:${proxyOk?'#34d399':'#f87171'}">${proxyOk?'✅':'❌'} HTTP Proxy ${proxyOk?'configurato':'non configurato'}</span>
+    <span style="color:${blOk?'#34d399':'#f87171'}">${blOk?'✅':'❌'} Browserless ${blOk?'configurato':'non configurato'}</span>
+  </div>
+  ${!blOk ? `<p style="font-size:.78rem;color:#f59e0b;margin-top:10px;line-height:1.5">
+    ⚠️ <b>KissKH streams non funzioneranno senza Browserless.</b><br/>
+    Registrati su <a href="https://www.browserless.io/" target="_blank" style="color:var(--accent-light)">browserless.io</a>
+    (free tier), copia il tuo URL WebSocket e impostalo su Vercel:<br/>
+    <code style="background:#1c1c26;padding:2px 6px;border-radius:3px">vercel env add BROWSERLESS_URL production</code><br/>
+    Formato: <code style="background:#1c1c26;padding:2px 6px;border-radius:3px">wss://chrome.browserless.io?token=TUO_TOKEN</code>
+  </p>` : ''}
 </div>
 
 <div class="card">

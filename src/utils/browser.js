@@ -3,13 +3,15 @@
 /**
  * Shared Puppeteer browser launcher — Vercel-compatible
  *
- * On Vercel / serverless:
- *   - Uses @sparticuz/chromium (pre-built ~45MB Chromium for Lambda/Edge)
- *   - puppeteer-core links to that binary
+ * Priority order:
+ *   1. BROWSERLESS_URL env var → connects to remote Chrome (Browserless.io, etc.)
+ *      wss://chrome.browserless.io?token=TOKEN
+ *      Works from Vercel serverless / any environment (just a WebSocket)
+ *   2. Local launch:
+ *      - PUPPETEER_EXECUTABLE_PATH → custom binary path (Docker / VPS)
+ *      - Auto-detect system Chrome (local dev)
  *
- * Locally / Docker:
- *   - Uses PUPPETEER_EXECUTABLE_PATH env var if set
- *   - Falls back to auto-detected system/bundled Chromium
+ * Browserless.io free tier: https://www.browserless.io/  (sign up, copy WS URL)
  *
  * Usage:
  *   const { launchBrowser } = require('./browser');
@@ -33,31 +35,42 @@ const IS_SERVERLESS = !!(
 );
 
 /**
- * Launch a Puppeteer browser instance configured for the current environment.
+ * Launch (or connect to) a Puppeteer browser instance.
+ *
+ * If BROWSERLESS_URL is set → connect to remote Chrome via WebSocket.
+ * Otherwise → launch locally (for Docker / local dev).
+ *
  * @returns {Promise<import('puppeteer-core').Browser>}
  */
 async function launchBrowser() {
+  const browserlessUrl = (process.env.BROWSERLESS_URL || '').trim();
+
+  // ── Option 1: Remote Chrome via Browserless.io (recommended for Vercel) ────
+  if (browserlessUrl) {
+    log.info('connecting to remote Chrome via BROWSERLESS_URL');
+    try {
+      const puppeteerCore = require('puppeteer-core');
+      const browser = await puppeteerCore.connect({
+        browserWSEndpoint: browserlessUrl,
+        defaultViewport: { width: 1280, height: 720 },
+      });
+      log.debug('connected to remote Chrome');
+      return browser;
+    } catch (err) {
+      log.error(`remote Chrome connection failed: ${err.message}`);
+      throw err;
+    }
+  }
+
+  // ── Option 2: Local launch (Docker / dev) ───────────────────────────────────
   const args = _baseArgs();
   let executablePath;
 
-  if (IS_SERVERLESS) {
-    // ── Vercel / Lambda: use @sparticuz/chromium ──────────────────────────────
-    log.info('launching chromium via @sparticuz/chromium (serverless)');
-    const chromium = require('@sparticuz/chromium');
-
-    // Chromium needs to decompress itself on first call — this may take a second
-    executablePath = await chromium.executablePath();
-
-    // chromium.args already includes all required serverless flags
-    args.push(...chromium.args);
-  } else if (process.env.PUPPETEER_EXECUTABLE_PATH && process.env.PUPPETEER_EXECUTABLE_PATH.length > 1) {
-    // ── Custom path (Docker / Linux with pre-installed Chromium) ─────────────
-    log.info(`launching chromium from PUPPETEER_EXECUTABLE_PATH`);
+  if (process.env.PUPPETEER_EXECUTABLE_PATH && process.env.PUPPETEER_EXECUTABLE_PATH.length > 1) {
+    log.info('launching chromium from PUPPETEER_EXECUTABLE_PATH');
     executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
   } else {
-    // ── Local dev: let puppeteer-core auto-detect or use system Chrome ────────
     log.info('launching chromium (local auto-detect)');
-    // On local dev, try common macOS/Linux/Windows paths
     executablePath = _detectLocalChrome();
   }
 
@@ -71,7 +84,7 @@ async function launchBrowser() {
 
   try {
     const browser = await puppeteerExtra.launch(launchOpts);
-    log.debug('browser launched');
+    log.debug('browser launched locally');
     return browser;
   } catch (err) {
     log.error(`browser launch failed: ${err.message}`);

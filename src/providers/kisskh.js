@@ -229,13 +229,15 @@ async function getStreams(stremioId, config = {}) {
     rawUrl = cached.url;
     subtitles = cached.subtitles;
   } else {
-    log.info('extracting stream via puppeteer', { serieId, episodeId });
-    rawUrl = await _extractStream(serieId, episodeId);
+    log.info('extracting stream+subs via browser', { serieId, episodeId });
+    const { streamUrl: extractedUrl, subApiUrl } = await _extractStreamAndSubs(serieId, episodeId);
+    rawUrl = extractedUrl;
     if (!rawUrl) {
       log.warn('no stream found', { serieId, episodeId });
       return [];
     }
-    subtitles = await _getSubtitles(serieId, episodeId);
+    // Get subtitles from sub API URL (no second browser needed)
+    subtitles = await _getSubtitlesFromApiUrl(subApiUrl, serieId, episodeId);
     streamCache.set(cacheKey, { url: rawUrl, subtitles });
   }
 
@@ -259,11 +261,22 @@ async function getStreams(stremioId, config = {}) {
   ];
 }
 
-// ─── Puppeteer stream extraction ──────────────────────────────────────────────
+// ─── Combined stream + subtitle extraction (single browser session) ───────────
 
-async function _extractStream(serieId, episodeId) {
+/**
+ * Opens ONE browser session on the episode page and intercepts BOTH the HLS
+ * stream URL (*.m3u8?v=…) and the subtitle API endpoint (/api/Sub/…).
+ * Returns as soon as both are found or after STREAM_MAX_WAIT ms.
+ *
+ * @param {string} serieId
+ * @param {string|number} episodeId
+ * @returns {Promise<{streamUrl:string|null, subApiUrl:string|null}>}
+ */
+async function _extractStreamAndSubs(serieId, episodeId) {
+  const MAX_WAIT = Number(process.env.STREAM_MAX_WAIT) || 40_000; // ms
   const browser = await launchBrowser();
   let streamUrl = null;
+  let subApiUrl = null;
 
   try {
     const page = await browser.newPage();
@@ -278,78 +291,65 @@ async function _extractStream(serieId, episodeId) {
       await page.setCookie({ name: 'cf_clearance', value: cfVal, domain: 'kisskh.co', path: '/', httpOnly: true, secure: true, sameSite: 'Lax' });
     }
 
-    // Block heavy resources to speed up navigation
+    // Block heavy resources; intercept m3u8 + sub API
     await page.setRequestInterception(true);
     page.on('request', req => {
       const rt = req.resourceType();
-      if (['image', 'font', 'stylesheet'].includes(rt)) {
-        req.abort();
-      } else {
-        // Intercept .m3u8 with v param
-        const u = req.url();
-        if (/^https:\/\/.*\.m3u8/.test(u) && /[?&]v=[a-zA-Z0-9]+/.test(u)) {
-          streamUrl = u;
-          log.info(`intercepted stream: ${u.slice(0, 80)}`);
-        }
-        req.continue();
+      if (['image', 'font', 'stylesheet', 'media'].includes(rt)) {
+        req.abort().catch(() => {});
+        return;
       }
+      const u = req.url();
+      // Intercept HLS stream with v param
+      if (!streamUrl && /^https:\/\/.*\.m3u8/.test(u) && /[?&]v=[a-zA-Z0-9]+/.test(u)) {
+        streamUrl = u;
+        log.info(`intercepted stream: ${u.slice(0, 100)}`);
+      }
+      // Intercept subtitle API endpoint
+      if (!subApiUrl && u.includes('/api/Sub/')) {
+        subApiUrl = u;
+        log.debug(`intercepted sub API: ${u.slice(0, 100)}`);
+      }
+      req.continue().catch(() => {});
     });
 
     const targetUrl = `${SITE_BASE}/Drama/Any/Episode-Any?id=${serieId}&ep=${episodeId}`;
-    log.debug('navigating to', { targetUrl });
-    await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 60_000 });
-    await _sleep(6_000);
+    log.info('navigating to episode page', { targetUrl });
+
+    // Use 'load' + manual wait so we can exit early once both URLs found
+    await page.goto(targetUrl, { waitUntil: 'load', timeout: MAX_WAIT }).catch(() => {});
+
+    // Poll until both found or timeout
+    const deadline = Date.now() + MAX_WAIT;
+    while (Date.now() < deadline && !(streamUrl && subApiUrl)) {
+      await _sleep(500);
+    }
+
+    log.info('extraction done', { streamFound: !!streamUrl, subFound: !!subApiUrl });
   } catch (err) {
-    log.error(`puppeteer stream extraction error: ${err.message}`);
+    log.error(`browser extraction error: ${err.message}`);
   } finally {
     await browser.close().catch(() => {});
   }
 
+  return { streamUrl, subApiUrl };
+}
+
+async function _extractStream(serieId, episodeId) {
+  const { streamUrl } = await _extractStreamAndSubs(serieId, episodeId);
   return streamUrl;
 }
 
 // ─── Subtitle extraction ───────────────────────────────────────────────────────
 
-async function _getSubtitles(serieId, episodeId) {
+/**
+ * Fetch & decrypt subtitles given an already-intercepted sub API URL.
+ * No browser is launched here.
+ */
+async function _getSubtitlesFromApiUrl(subApiUrl, serieId, episodeId) {
   const cacheKey = `sub:${serieId}:${episodeId}`;
   const cached = subCache.get(cacheKey);
   if (cached) return cached;
-
-  const browser = await launchBrowser();
-  let subApiUrl = null;
-
-  try {
-    const page = await browser.newPage();
-    await page.setUserAgent(
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-    );
-
-    page.on('request', req => {
-      const u = req.url();
-      if (!subApiUrl && u.includes('/api/Sub/')) {
-        subApiUrl = u;
-        log.debug('intercepted subtitle API', { subApiUrl });
-      }
-      req.continue().catch(() => {});
-    });
-
-    await page.setRequestInterception(true);
-
-    const cfCookieStr = await getCloudflareCookie().catch(() => '');
-    if (cfCookieStr) {
-      const cfVal = cfCookieStr.replace(/^cf_clearance=/, '');
-      await page.setCookie({ name: 'cf_clearance', value: cfVal, domain: 'kisskh.co', path: '/', httpOnly: true, secure: true, sameSite: 'Lax' });
-    }
-
-    await page.goto(`${SITE_BASE}/Drama/Any/Episode-Any?id=${serieId}&ep=${episodeId}`, { waitUntil: 'networkidle2', timeout: 60_000 });
-
-    // Wait for subtitle endpoint intercept
-    for (let i = 0; i < 20 && !subApiUrl; i++) await _sleep(500);
-  } catch (err) {
-    log.warn(`subtitle intercept error: ${err.message}`);
-  } finally {
-    await browser.close().catch(() => {});
-  }
 
   if (!subApiUrl) {
     log.warn('no subtitle API endpoint found', { serieId, episodeId });
@@ -409,6 +409,12 @@ async function _getSubtitles(serieId, episodeId) {
 
   subCache.set(cacheKey, decoded);
   return decoded;
+}
+
+/** Backward-compat wrapper: opens browser to get subApiUrl, then extracts subs */
+async function _getSubtitles(serieId, episodeId) {
+  const { subApiUrl } = await _extractStreamAndSubs(serieId, episodeId);
+  return _getSubtitlesFromApiUrl(subApiUrl, serieId, episodeId);
 }
 
 function _resolveSubUrl(s) {
