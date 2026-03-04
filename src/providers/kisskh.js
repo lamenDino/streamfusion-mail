@@ -46,25 +46,24 @@ function _baseHeaders() {
 
 /** Full headers with CF cookie — slow, used only when base headers get 403 */
 async function _headers() {
-  const cookie = await withTimeout(getCloudflareCookie(), 5_000, 'cf-cookie').catch(() => '');
+  const cookie = await withTimeout(getCloudflareCookie(), 3_500, 'cf-cookie').catch(() => '');
   return { ..._baseHeaders(), ...(cookie ? { 'Cookie': cookie } : {}) };
 }
 
 /**
- * GET helper: tries without CF cookie first, retries with CF cookie on 403.
+ * GET helper: tries without CF cookie first, retries with CF cookie on any failure.
  * @param {string} url
- * @param {number} [timeout=10000]
+ * @param {number} [timeout=8000]
  * @returns {Promise<any|null>}
  */
-async function _apiGet(url, timeout = 10_000) {
+async function _apiGet(url, timeout = 8_000) {
   try {
     const { data } = await axios.get(url, { headers: _baseHeaders(), timeout });
     return data;
   } catch (err) {
     const status = err?.response?.status;
-    log.warn(`API call failed (${status}) without CF cookie, retrying with cookie`, { url });
-    if (status !== 403 && status !== 503 && status !== 429) return null;
-    // Retry with CF cookie
+    log.warn(`API call failed (status=${status ?? 'network'}) without CF cookie, retrying with cookie`, { url });
+    // Always retry with CF cookie on any failure
     try {
       const headers = await _headers();
       const { data } = await axios.get(url, { headers, timeout });

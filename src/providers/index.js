@@ -24,7 +24,7 @@ const { createLogger } = require('../utils/logger');
 const log = createLogger('aggregator');
 
 // Configurable timeouts (ms)
-const CATALOG_TIMEOUT = Number(process.env.CATALOG_TIMEOUT) || 20_000;
+const CATALOG_TIMEOUT = Number(process.env.CATALOG_TIMEOUT) || 9_000;
 const META_TIMEOUT    = Number(process.env.META_TIMEOUT)    || 30_000;
 const STREAM_TIMEOUT  = Number(process.env.STREAM_TIMEOUT)  || 45_000;
 

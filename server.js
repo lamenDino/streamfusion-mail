@@ -113,6 +113,39 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', version: manifest.version, ts: new Date().toISOString() });
 });
 
+// Debug endpoint — tests provider reachability (remove in production)
+app.get('/debug/providers', async (req, res) => {
+  const axios = require('axios');
+  const results = {};
+  const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+  // Test kisskh API
+  try {
+    const t0 = Date.now();
+    const r = await axios.get('https://kisskh.co/api/DramaList/List?page=1&type=1&sub=0&country=2&status=2&order=3&pageSize=5', {
+      headers: { 'User-Agent': UA, 'Accept': 'application/json', 'Referer': 'https://kisskh.co/' },
+      timeout: 8000,
+    });
+    results.kisskh = { ok: true, status: r.status, count: r.data?.data?.length ?? '?', ms: Date.now() - t0 };
+  } catch (e) {
+    results.kisskh = { ok: false, status: e?.response?.status, error: e.message };
+  }
+
+  // Test rama
+  try {
+    const t0 = Date.now();
+    const r = await axios.get('https://ramaorientalfansub.live/', {
+      headers: { 'User-Agent': UA },
+      timeout: 8000,
+    });
+    results.rama = { ok: true, status: r.status, ms: Date.now() - t0 };
+  } catch (e) {
+    results.rama = { ok: false, status: e?.response?.status, error: e.message };
+  }
+
+  res.json(results);
+});
+
 // 404 fallback
 app.use((req, res) => {
   res.status(404).json({ error: 'Not found' });
