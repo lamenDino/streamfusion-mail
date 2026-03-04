@@ -27,7 +27,7 @@ let _proxyAgent = null;
 let _proxyUrl = null;
 
 function getProxyAgent() {
-  const proxyUrl = process.env.PROXY_URL;
+  const proxyUrl = (process.env.PROXY_URL || '').trim();
   if (!proxyUrl) return null;
   if (_proxyAgent && _proxyUrl === proxyUrl) return _proxyAgent;
 
@@ -68,7 +68,7 @@ function randomUA() {
  * @returns {Promise<string|null>}
  */
 async function fetchWithCloudscraper(url, { retries = 3, timeout = 12_000, retryDelay = 2_000, referer } = {}) {
-  const proxyUrl = process.env.PROXY_URL || null;
+  const proxyUrl = (process.env.PROXY_URL || '').trim() || null;
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       log.debug(`Attempt ${attempt}/${retries} — ${url}`);
