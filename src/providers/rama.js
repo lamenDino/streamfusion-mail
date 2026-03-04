@@ -57,18 +57,27 @@ async function getCatalog(skip = 0, search = '', config = {}) {
     const $ = cheerio.load(html);
     const pageItems = [];
 
-    // Main grid selector — adjust if site restructures
-    $('article, .film-item, .grid-item, .latestPost').each((_, el) => {
+    // Cards use class "kira-anime" — title comes from img alt attribute
+    $('div.kira-anime').each((_, el) => {
       const $el = $(el);
-      const anchor = $el.find('a').first();
-      const href = anchor.attr('href') || '';
-      const title = (_cleanTitle(
-        $el.find('.entry-title, h2, h3, .title').first().text() || anchor.attr('title') || ''
-      ));
-      const poster = $el.find('img').first().attr('src') || $el.find('img').first().attr('data-src') || '';
+      // Href is on the parent container's first <a>
+      const $card = $el.parent();
+      const href = $card.find('a[href*="/drama/"]').first().attr('href')
+        || $card.parent().find('a[href*="/drama/"]').first().attr('href')
+        || $el.find('a[href*="/drama/"]').first().attr('href')
+        || '';
+
+      const img = $el.find('img').first();
+      const poster = img.attr('src') || img.attr('data-src') || '';
+      // Title from img alt, cleanup " thumbnail" and "(year)"
+      const rawTitle = img.attr('alt') || '';
+      const title = _cleanTitle(
+        rawTitle.replace(/\s*thumbnail\s*$/i, '').replace(/\s*\(\d{4}\)\s*$/, '').trim()
+      );
+
       if (!href || !title) return;
 
-      const slug = href.split('/').filter(Boolean).pop() || '';
+      const slug = href.replace(/\/$/, '').split('/').pop() || '';
       const id = `rama_${slug}`;
 
       if (searchQuery && !title.toLowerCase().includes(searchQuery) && !slug.includes(searchQuery)) return;
@@ -245,29 +254,32 @@ async function getStreams(id, config = {}) {
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
 async function _getEpisodes(seriesUrl, $, seriesId, year) {
-  const episodes = [];
-  const thumbElements = $('.swiper-slide a div img').toArray();
+  // Extract episode links directly from swiper — MUCH more reliable than constructing URLs.
+  // Slides are in reverse order (newest first), so we reverse to get ep1 first.
+  const slides = [];
 
-  for (let i = 0; i < thumbElements.length; i++) {
-    const epNum = i + 1;
-    const thumbnail = $(thumbElements[i]).attr('src') || '';
-    if (!thumbnail) {
-      log.warn(`no thumbnail for episode ${epNum}`);
-      continue;
-    }
+  $('.swiper-slide').each((_, el) => {
+    const $slide = $(el);
+    const anchor = $slide.find('a[href*="/watch/"]').first();
+    const link = anchor.attr('href') || '';
+    if (!link) return;
+    const img = $slide.find('img').first();
+    const thumbnail = img.attr('src') || img.attr('data-src') || '';
+    // Extract episode number from URL like /watch/.../episodio-16/
+    const epMatch = link.match(/episodio-(\d+)/i);
+    const epNum = epMatch ? parseInt(epMatch[1], 10) : slides.length + 1;
+    slides.push({ epNum, link, thumbnail });
+  });
 
-    const episodeLink = year
-      ? `${BASE_URL}/watch/${seriesId}-${year}-episodio-${epNum}/`
-      : `${BASE_URL}/watch/${seriesId}-episodio-${epNum}/`;
+  // Sort by episode number ascending and deduplicate
+  slides.sort((a, b) => a.epNum - b.epNum);
 
-    // Store the episode link — stream URL is fetched lazily in getStreams
-    episodes.push({
-      id: `episodio-${epNum}`,
-      title: `Episodio ${epNum}`,
-      thumbnail,
-      link: episodeLink,
-    });
-  }
+  const episodes = slides.map(s => ({
+    id: `episodio-${s.epNum}`,
+    title: `Episodio ${s.epNum}`,
+    thumbnail: s.thumbnail,
+    link: s.link,
+  }));
 
   log.info(`fetched ${episodes.length} episodes`, { seriesId });
   return episodes;
