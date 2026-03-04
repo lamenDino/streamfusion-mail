@@ -229,15 +229,29 @@ async function getStreams(stremioId, config = {}) {
     rawUrl = cached.url;
     subtitles = cached.subtitles;
   } else {
-    log.info('extracting stream+subs via browser', { serieId, episodeId });
-    const { streamUrl: extractedUrl, subApiUrl } = await _extractStreamAndSubs(serieId, episodeId);
-    rawUrl = extractedUrl;
+    // 1. Try direct API (fast, no browser needed) — works when cf_clearance cookie is set
+    log.info('trying direct API stream extraction', { serieId, episodeId });
+    const apiResult = await _fetchStreamViaApi(serieId, episodeId, config.proxyUrl);
+
+    if (apiResult && apiResult.streamUrl) {
+      rawUrl     = apiResult.streamUrl;
+      subtitles  = await _getSubtitlesFromApiUrl(apiResult.subApiUrl, serieId, episodeId);
+    } else {
+      // 2. Fallback: browser extraction (intercepts m3u8 via Puppeteer)
+      log.info('direct API failed, falling back to browser extraction', { serieId, episodeId });
+      const { streamUrl: extractedUrl, subApiUrl } = await _extractStreamAndSubs(serieId, episodeId);
+      rawUrl    = extractedUrl;
+      if (!rawUrl) {
+        log.warn('no stream found via browser', { serieId, episodeId });
+        return [];
+      }
+      subtitles = await _getSubtitlesFromApiUrl(subApiUrl, serieId, episodeId);
+    }
+
     if (!rawUrl) {
       log.warn('no stream found', { serieId, episodeId });
       return [];
     }
-    // Get subtitles from sub API URL (no second browser needed)
-    subtitles = await _getSubtitlesFromApiUrl(subApiUrl, serieId, episodeId);
     streamCache.set(cacheKey, { url: rawUrl, subtitles });
   }
 
@@ -259,6 +273,57 @@ async function getStreams(stremioId, config = {}) {
       },
     },
   ];
+}
+
+// ─── Direct API stream extraction (no browser) ────────────────────────────────
+
+/**
+ * Attempts to get the KissKH stream URL directly via their API,
+ * using the cf_clearance cookie from the environment variable.
+ *
+ * KissKH episode API:
+ *   GET /api/DramaList/Episode/{id}?type=<1|2>&sub=0&source=<0|1>&quality=auto
+ * Response JSON fields: Video, Sub, ThirdParty, ...
+ *
+ * @returns {Promise<{streamUrl:string, subApiUrl:string|null}|null>}
+ */
+async function _fetchStreamViaApi(serieId, episodeId, proxyUrl) {
+  const cfClearance = (process.env.CF_CLEARANCE_KISSKH || '').trim();
+  if (!cfClearance) {
+    log.debug('CF_CLEARANCE_KISSKH not set, cannot use direct API');
+    return null;
+  }
+
+  const cookieVal = cfClearance.startsWith('cf_clearance=') ? cfClearance : `cf_clearance=${cfClearance}`;
+  const headers = {
+    ..._baseHeaders(),
+    'Cookie': cookieVal,
+  };
+
+  const proxyAgent = proxyUrl ? makeProxyAgent(proxyUrl) : getProxyAgent();
+  const proxyConfig = proxyAgent ? { httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false } : {};
+
+  // Try type=2 first (usually external CDN), then type=1 (internal)
+  for (const [type, source] of [[2, 1], [1, 0], [2, 0], [1, 1]]) {
+    const url = `${API_BASE}/DramaList/Episode/${episodeId}?type=${type}&sub=0&source=${source}&quality=auto`;
+    try {
+      log.debug(`direct API try type=${type} source=${source}`, { episodeId });
+      const { data } = await axios.get(url, { headers, timeout: 8_000, ...proxyConfig });
+      const videoUrl = data?.Video || data?.video || data?.url || data?.stream;
+      if (videoUrl && videoUrl.includes('http')) {
+        log.info(`direct API stream found (type=${type},source=${source})`, { episodeId, url: videoUrl.slice(0, 80) });
+        // Subtitle URL: same pattern as browser-intercepted /api/Sub/<episodeId>
+        const subApiUrl = `${API_BASE}/Sub/${episodeId}`;
+        return { streamUrl: videoUrl, subApiUrl };
+      }
+    } catch (err) {
+      const status = err?.response?.status;
+      log.debug(`direct API type=${type} source=${source} failed: ${status ?? err.message}`);
+    }
+  }
+
+  log.warn('direct API: no stream URL found in any type/source combo', { episodeId });
+  return null;
 }
 
 // ─── Combined stream + subtitle extraction (single browser session) ───────────
