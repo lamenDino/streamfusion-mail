@@ -73,8 +73,8 @@ export default {
     } catch {
       return _json({ error: 'Invalid url parameter' }, 400);
     }
-    if (!['kisskh.co', 'www.kisskh.co'].includes(parsedTarget.hostname)) {
-      return _json({ error: 'Only kisskh.co URLs are proxied by this Worker' }, 403);
+    if (!['kisskh.do', 'www.kisskh.do', 'kisskh.co', 'www.kisskh.co'].includes(parsedTarget.hostname)) {
+      return _json({ error: 'Only kisskh.do / kisskh.co URLs are proxied by this Worker' }, 403);
     }
 
     // ── Build outbound headers ──────────────────────────────────────────────

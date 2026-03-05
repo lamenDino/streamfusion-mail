@@ -23,7 +23,7 @@ const { createLogger } = require('./logger');
 const log = createLogger('flaresolverr');
 
 const MAX_TIMEOUT = Number(process.env.FLARESOLVERR_MAX_TIMEOUT) || 55_000;
-const KISSKH_PRIMER = 'https://kisskh.co/';
+const KISSKH_PRIMER = 'https://kisskh.do/';
 
 /**
  * Check whether a FlareSolverr URL is configured.
@@ -145,8 +145,8 @@ async function flareSolverrGetJSONWithPrimer(apiUrl, primerUrl = KISSKH_PRIMER) 
     // Pass JSON Accept headers so the server returns JSON instead of the Angular app HTML
     const JSON_HEADERS = {
       'Accept': 'application/json, text/plain, */*',
-      'Referer': 'https://kisskh.co/',
-      'Origin': 'https://kisskh.co',
+      'Referer': 'https://kisskh.do/',
+      'Origin': 'https://kisskh.do',
       'X-Requested-With': 'XMLHttpRequest',
     };
     const body = await sessionGet(apiUrl, sessionId, JSON_HEADERS);

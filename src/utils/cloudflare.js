@@ -14,7 +14,7 @@ const { createLogger } = require('./logger');
 
 const log = createLogger('cloudflare');
 
-const KISSKH_TARGET = 'https://kisskh.co/';
+const KISSKH_TARGET = 'https://kisskh.do/';
 const COOKIE_FILE = path.join(process.cwd(), 'data', 'cf_cookie.json');
 const COOKIE_TTL = Number(process.env.CF_COOKIE_MAX_AGE) || 3_600_000;    // 1 h
 const MAX_RETRIES = Number(process.env.CF_MAX_RETRY) || 3;

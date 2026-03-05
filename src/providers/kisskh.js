@@ -2,7 +2,7 @@
 
 /**
  * KissKH provider
- * Source: https://kisskh.co
+ * Source: https://kisskh.do
  *
  * Provides:
  *   - getCatalog(skip, search)   → [{id, type, name, poster, ...}]
@@ -27,8 +27,8 @@ const { createLogger } = require('../utils/logger');
 
 const log = createLogger('kisskh');
 
-const API_BASE = 'https://kisskh.co/api';
-const SITE_BASE = 'https://kisskh.co';
+const API_BASE = 'https://kisskh.do/api';
+const SITE_BASE = 'https://kisskh.do';
 
 const catalogCache = new TTLCache({ ttl: 10 * 60_000, maxSize: 200 });
 const metaCache    = new TTLCache({ ttl: 30 * 60_000, maxSize: 500 });
@@ -706,7 +706,7 @@ async function _extractStreamAndSubs(serieId, episodeId) {
     const cfCookieStr = await getCloudflareCookie().catch(() => '');
     if (cfCookieStr) {
       const cfVal = cfCookieStr.replace(/^cf_clearance=/, '');
-      await page.setCookie({ name: 'cf_clearance', value: cfVal, domain: 'kisskh.co', path: '/', httpOnly: true, secure: true, sameSite: 'Lax' });
+      await page.setCookie({ name: 'cf_clearance', value: cfVal, domain: 'kisskh.do', path: '/', httpOnly: true, secure: true, sameSite: 'Lax' });
     }
 
     // Block heavy resources; intercept m3u8 + sub API
