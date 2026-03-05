@@ -5,6 +5,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [1.4.5] — 2026-06-XX
+
+### Fixed
+- **"metadati non trovati" su Cinemeta (cinemeta=true)** — quando `cinemeta=true` era configurato, aggiungere `tt` al top-level `idPrefixes` causava Stremio a chiamare il nostro `getMeta` per gli item Cinemeta (ID `tt*`). Restituendo `{meta: null}` per questi ID, Stremio mostrava "metadati non trovati" su tutta la home. Fix: il manifest con `cinemeta=true` ora usa il formato **per-resource idPrefixes**: `meta` gestisce solo `kisskh_*`/`rama_*`, mentre `stream` gestisce anche `tt*`. Stremio usa Cinemeta per i meta e il nostro addon solo per gli stream.
+- **Cinemeta → KissKH: titoli K-drama non risolti** — `v3-cinemeta.strem.io` restituisce `{}` per i K-drama (Vercel datacenter IPs esclusi e/o assenza dei titoli nel database Cinemeta). Aggiunto fallback a **TMDB `/find/{imdbId}`** quando Cinemeta non fornisce il titolo. Richiede `tmdbKey` nel config URL oppure `TMDB_API_KEY` in Vercel env vars.
+- **Cinemeta → KissKH: 0 stream per K-drama classici** — `_searchCatalog` cercava solo negli ultimi 600 drammi ordinati per data (`order=3`). Drammi come "Crash Landing on You" (2019, page 3 `order=1`), "Goblin" (page 3), "Descendants of the Sun" (page 3), "Boys Over Flowers" (page 10) non venivano mai trovati. Aggiunto **popularity sweep parallelo** (`order=1`, pagine 1-10) che parte in parallelo con il recency sweep e copre i 300 drammi più visti di tutti i tempi.
+- **Risultati di ricerca: match esatti penalizzati da match parziali** — dopo il merge dei risultati, la slice a 20 prendeva i primi 20 per ordine di scoperta (recency sweep). "Crash" (score 0.85) poteva vincere su "Crash Landing on You" (score 1.0) se il primo veniva trovato prima. Fix: i risultati vengono ora **ordinati per `titleSimilarity` discendente** prima della slice, garantendo che i match esatti siano sempre in cima.
+
+### Added
+- **`findTitleByImdbId(imdbId, apiKey)`** in `src/utils/tmdb.js` — nuova funzione per cercare il titolo di una serie via TMDB `/find/{imdbId}?external_source=imdb_id`. Usata come fallback per i Cinemeta stream request.
+- **`TMDB_API_KEY` env var** — se impostata in Vercel, abilita il fallback TMDB per tutti gli utenti indipendentemente dalla config personale. Chiave gratuita su https://themoviedb.org. Documentata in `stack.env.example`.
+- **Manifest version bump** 1.3.8 → 1.4.4 — forza Stremio a ri-scaricare il manifest e invalidare la cache.
+
+---
+
 ## [1.3.8] — 2026-03-05
 
 ### Added
