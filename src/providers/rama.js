@@ -152,6 +152,26 @@ async function getMeta(id, config = {}) {
   });
 
   const poster = $('.anime-image > img, .series-poster img, .entry-image img').first().attr('src') || '';
+
+  // Background: prefer og:image (usually wider banner), fallback to poster
+  const background = $('meta[property="og:image"]').attr('content')
+    || $('meta[name="twitter:image"]').attr('content')
+    || poster;
+
+  // Genres
+  const genres = [];
+  $('a[href*="/genere/"], a[href*="/genre/"], a[href*="/tag/"], .genres a, .genre a, .badge-genre').each((_, el) => {
+    const g = $(el).text().trim();
+    if (g && g.length < 40) genres.push(g);
+  });
+
+  // Cast
+  const cast = [];
+  $('[class*="cast"] .name, [class*="cast"] a, .characters .name, .actor-name, .staff a').each((_, el) => {
+    const c = $(el).text().trim();
+    if (c && c.length > 1 && c.length < 60) cast.push(c);
+  });
+
   const descBody = $('div.font-light > div:nth-child(1)').text().trim()
     || $('.serie-description, .entry-content').first().text().trim();
   const description = [status && `Stato: ${status}`, show, rating + adultFlag, descBody]
@@ -168,8 +188,11 @@ async function getMeta(id, config = {}) {
     type: 'kdrama',
     name,
     poster,
+    background: background || undefined,
     description,
     releaseInfo: year || '',
+    genres: genres.length ? genres : undefined,
+    cast: cast.length ? cast : undefined,
     seriesUrl,
     baseId,
     year,
@@ -183,9 +206,9 @@ async function getMeta(id, config = {}) {
     id: `${seriesId}:${ep.id}`,
     title: ep.title,
     season: 1,
-    number: idx + 1,
-    thumbnail: ep.thumbnail || '',
-    released: new Date(0).toISOString(),
+    episode: idx + 1,
+    thumbnail: ep.thumbnail || poster || '',
+    released: year ? new Date(`${year}-01-01`).toISOString() : '',
   }));
 
   metaCache.set(seriesId, meta);

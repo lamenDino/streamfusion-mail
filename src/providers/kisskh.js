@@ -205,15 +205,22 @@ async function getMeta(id, config = {}) {
       type: 'series',
       name: data.title,
       poster: data.thumbnail,
+      background: data.thumbnail || undefined,
       description: data.description || '',
       releaseInfo: data.releaseDate ? data.releaseDate.slice(0, 4) : '',
+      genres: Array.isArray(data.genres) && data.genres.length
+        ? data.genres.map(g => (typeof g === 'string' ? g : g.name || g.title || '')).filter(Boolean)
+        : (data.subCategory ? [data.subCategory] : undefined),
+      cast: Array.isArray(data.artists) && data.artists.length
+        ? data.artists.map(a => (typeof a === 'string' ? a : a.name || a.title || '')).filter(Boolean)
+        : undefined,
       serieId,
       videos: (data.episodes || []).map((ep, idx) => ({
         id: `${id}:${ep.id}`,
         title: ep.title || `Episode ${ep.number || idx + 1}`,
         season: Number(ep.season) || 1,
         episode: Number(ep.episode || ep.number || idx + 1),
-        thumbnail: data.thumbnail,
+        thumbnail: ep.thumbnail || data.thumbnail,
         released: ep.releaseDate || '',
       })),
     };

@@ -5,6 +5,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [1.1.2] — 2026-03-05
+
+### Fixed
+- **Rama** — `SundefinedEundefined Episodio 1`: il campo `number` nei video è stato rinominato in `episode` (campo richiesto da Stremio per mostrare `S1E1`)
+- **Rama** — aggiunto campo `background` (OG image dalla pagina, fallback al poster)
+- **Rama** — aggiunta estrazione `genres` e `cast` dallo scraping HTML
+- **Rama** — data di rilascio episodi non più epoca Unix (1970): usa l'anno della serie
+- **Rama** — thumbnail episodi ora usa l'immagine dello slide del swiper con fallback al poster
+- **KissKH** — aggiunto campo `background` (thumbnail della serie)
+- **KissKH** — aggiunto mapping `genres` da `data.genres`/`data.subCategory` (se presenti nella risposta API)
+- **KissKH** — aggiunto mapping `cast` da `data.artists` (se presente nella risposta API)
+- **KissKH** — thumbnail episodi ora usa `ep.thumbnail` con fallback a `data.thumbnail`
+
+---
+
 ## [1.1.1] — 2026-03-05
 
 ### Fixed
