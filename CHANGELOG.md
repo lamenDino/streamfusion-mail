@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [1.5.0] — 2026-03-06
+
+### Fixed
+- **CF Worker path ignorato su stream KissKH** — il Worker poteva restituire JSON come `string` (soprattutto endpoint `.png` con content-type `image/png`) e `_cfWorkerGet` accettava solo oggetti. Risultato: fallback Worker scartato come `null`, poi `.png` diretto 403 e browser fallback spesso senza stream su Vercel. Ora `_cfWorkerGet` usa `responseType: text`, parse JSON anche da stringa e logga status/error upstream.
+- **Worker requests stream più compatibili** — aggiunti parametri `xhr=1` e `referer` esplicito nelle chiamate stream (`.png` e legacy episode API) per allineare gli header al comportamento browser.
+
+---
+
 ## [1.4.9] — 2026-03-06
 
 ### Fixed

@@ -98,8 +98,35 @@ async function _cfWorkerGet(targetUrl, timeout = 8_000, extraParams = {}) {
   const auth = (process.env.CF_WORKER_AUTH || '').trim();
   if (auth) headers['x-worker-auth'] = auth;
   try {
-    const { data } = await axios.get(workerUrl.toString(), { headers, timeout });
-    return (data && typeof data === 'object') ? data : null;
+    const resp = await axios.get(workerUrl.toString(), {
+      headers,
+      timeout,
+      validateStatus: () => true,
+      responseType: 'text',
+    });
+
+    const parseWorkerData = (payload) => {
+      if (!payload) return null;
+      if (typeof payload === 'object') return payload;
+      if (typeof payload === 'string') {
+        const t = payload.trim();
+        if (!t) return null;
+        try { return JSON.parse(t); } catch { return null; }
+      }
+      return null;
+    };
+
+    const parsed = parseWorkerData(resp.data);
+    if (resp.status >= 400) {
+      const msg = parsed?.error || `status ${resp.status}`;
+      log.warn('CF Worker upstream error', { status: resp.status, msg, url: targetUrl.slice(0, 80) });
+      return null;
+    }
+    if (!parsed) {
+      log.warn('CF Worker returned non-JSON payload', { status: resp.status, url: targetUrl.slice(0, 80) });
+      return null;
+    }
+    return parsed;
   } catch (err) {
     log.warn(`CF Worker request failed: ${err.message}`, { url: targetUrl.slice(0, 80) });
     return null;
@@ -585,7 +612,7 @@ async function _fetchStreamViaPngApi(episodeId, proxyUrl) {
 
   // Try CF Worker first if available (often bypasses anti-bot checks for this endpoint)
   if (getCfWorkerUrl()) {
-    const workerData = await _cfWorkerGet(url, 8_000);
+    const workerData = await _cfWorkerGet(url, 8_000, { xhr: '1', referer: `${SITE_BASE}/` });
     const parsed = parsePngPayload(workerData);
     if (parsed) {
       log.info('.png API stream found via CF Worker', { episodeId, url: parsed.streamUrl.slice(0, 80) });
@@ -643,7 +670,8 @@ async function _fetchStreamViaApi(serieId, episodeId, proxyUrl) {
   if (getCfWorkerUrl()) {
     for (const [type, source] of [[2, 1], [1, 0], [2, 0], [1, 1]]) {
       const url = `${API_BASE}/DramaList/Episode/${episodeId}?type=${type}&sub=0&source=${source}&quality=auto`;
-      const workerData = await _cfWorkerGet(url, 8_000);
+      const dramaPageReferer = `${SITE_BASE}/Drama/Any/Episode-Any?id=${serieId}&ep=${episodeId}`;
+      const workerData = await _cfWorkerGet(url, 8_000, { xhr: '1', referer: dramaPageReferer });
       const workerResult = _parseVideoData(workerData);
       if (workerResult) {
         log.info(`CF Worker stream found (type=${type},source=${source})`, { episodeId, url: workerResult.streamUrl.slice(0, 80) });
