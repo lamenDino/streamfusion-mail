@@ -208,14 +208,14 @@ async function getMeta(id, config = {}) {
   const seriesUrl = await _findDramaUrl(slug, config);
   if (!seriesUrl) {
     log.warn('series page not found', { id, slug });
-    return { meta: _emptyMeta(seriesId) };
+    return { meta: await _tmdbFallbackMeta(seriesId, slug, config) };
   }
 
   log.info('fetching meta', { id, seriesUrl });
   const html = await fetchWithCloudscraper(seriesUrl, { referer: BASE_URL, proxyUrl: config.proxyUrl });
   if (!html) {
     log.warn('meta fetch returned null', { id });
-    return { meta: _emptyMeta(seriesId) };
+    return { meta: await _tmdbFallbackMeta(seriesId, slug, config) };
   }
 
   const $ = cheerio.load(html);
@@ -390,6 +390,30 @@ function _extractEpisodes($, seriesSlug, year) {
 
 function _emptyMeta(id) {
   return { id, type: 'kdrama', name: id.replace(/^drammatica_/, '').replace(/-/g, ' '), videos: [] };
+}
+
+async function _tmdbFallbackMeta(seriesId, slug, config) {
+  const base = _emptyMeta(seriesId);
+  if (!config.tmdbKey) return base;
+  try {
+    const title = slug.replace(/-/g, ' ');
+    const tmdb = await enrichFromTmdb(title, null, config.tmdbKey);
+    if (!tmdb) return base;
+    if (tmdb.poster)         base.poster      = tmdb.poster;
+    if (tmdb.background)     base.background  = tmdb.background;
+    if (tmdb.description)    base.description = tmdb.description;
+    if (tmdb.genres?.length) base.genres      = tmdb.genres;
+    if (tmdb.cast?.length)   base.cast        = tmdb.cast;
+    if (tmdb.imdbRating)     base.imdbRating  = tmdb.imdbRating;
+    if (tmdb.releaseInfo)    base.releaseInfo = tmdb.releaseInfo;
+    if (tmdb.imdbId)         base.imdb_id     = tmdb.imdbId;
+    if (config.rpdbKey && tmdb.imdbId) {
+      const rpdb = rpdbPosterUrl(config.rpdbKey, tmdb.imdbId);
+      if (rpdb) base.poster = rpdb;
+    }
+    metaCache.set(seriesId, base);
+  } catch (e) { /* TMDB unavailable */ }
+  return base;
 }
 
 // ─── Streams ──────────────────────────────────────────────────────────────────

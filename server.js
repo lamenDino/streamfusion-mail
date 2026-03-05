@@ -74,8 +74,11 @@ function cfgFrom(param) {
   return (param && isValidConfig(param)) ? decodeConfig(param) : { ...DEFAULT_CONFIG };
 }
 
-/** Stremio JSON response */
-function stremioJson(res, data) {
+/** Stremio JSON response with optional Cache-Control */
+function stremioJson(res, data, { maxAge = 0 } = {}) {
+  if (maxAge > 0) {
+    res.setHeader('Cache-Control', `public, max-age=${maxAge}, stale-while-revalidate=${maxAge * 3}`);
+  }
   res.setHeader('Content-Type', 'application/json');
   res.json(data);
 }
@@ -129,7 +132,7 @@ app.get([
   const config = cfgFrom(req.params.config);
   const extra  = parseExtra(req.params.extra);
   try {
-    stremioJson(res, await handleCatalog(req.params.type, req.params.id, extra, config));
+    stremioJson(res, await handleCatalog(req.params.type, req.params.id, extra, config), { maxAge: 300 });
   } catch (err) {
     log.error(`catalogRoute: ${err.message}`);
     stremioJson(res, { metas: [] });
@@ -143,7 +146,7 @@ app.get([
 ], async (req, res) => {
   const config = cfgFrom(req.params.config);
   try {
-    stremioJson(res, await handleMeta(req.params.type, req.params.id, config));
+    stremioJson(res, await handleMeta(req.params.type, req.params.id, config), { maxAge: 1800 });
   } catch (err) {
     log.error(`metaRoute: ${err.message}`);
     stremioJson(res, { meta: null });
@@ -157,7 +160,7 @@ app.get([
 ], async (req, res) => {
   const config = cfgFrom(req.params.config);
   try {
-    stremioJson(res, await handleStream(req.params.type, req.params.id, config));
+    stremioJson(res, await handleStream(req.params.type, req.params.id, config), { maxAge: 3600 });
   } catch (err) {
     log.error(`streamRoute: ${err.message}`);
     stremioJson(res, { streams: [] });
