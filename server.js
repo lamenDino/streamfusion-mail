@@ -364,29 +364,27 @@ app.get('/debug/drammatica', requireDebugAuth, async (req, res) => {
   const cheerio = require('cheerio');
   const proxyUrl = (process.env.PROXY_URL || '').trim();
 
-  // Check if any known alternative domains for Drammatica are alive
-  const altDomains = [
-    'https://www.drammatica.it',
-    'https://drammatica.it',
-    'https://www.drammatica.tv',
-    'https://www.drammatica.online',
-    'https://drammaticaita.wordpress.com',
-  ];
-  const domainCheck = {};
-  for (const base of altDomains) {
-    const t0 = Date.now();
-    try {
-      const html = await fetchWithCloudscraper(base + '/', { referer: base, proxyUrl });
-      const isParked = !html || html.includes('parklogic') || html.includes('Redirecting...') || html.length < 6000;
-      const $ = html ? cheerio.load(html) : null;
-      const title = $ ? $('title').text().trim().slice(0, 80) : '';
-      const articleCount = $ ? $('article').length : 0;
-      domainCheck[base] = { alive: !!html && !isParked, isParked, htmlLen: html?.length ?? 0, title, articleCount, ms: Date.now()-t0 };
-    } catch (err) {
-      domainCheck[base] = { alive: false, error: err.message, ms: Date.now()-t0 };
-    }
+  // Inspect wordpress.com mirror candidate
+  const wpUrl = 'https://drammaticaita.wordpress.com/';
+  const t0 = Date.now();
+  try {
+    const html = await fetchWithCloudscraper(wpUrl, { referer: wpUrl, proxyUrl });
+    if (!html) return res.json({ error: 'empty response' });
+    const $ = cheerio.load(html);
+    const title = $('title').text().trim().slice(0, 100);
+    const articles = [];
+    $('article, .post, .entry, h2 a[href], h3 a[href], .wp-block-post').slice(0, 5).each((_, el) => {
+      articles.push({ cls: $(el).attr('class'), tag: el.name, href: $(el).find('a[href]').first().attr('href'), text: $(el).find('h2, h3, .entry-title').first().text().trim().slice(0, 60) });
+    });
+    const dramaLinks = [];
+    $('a[href]').each((_, el) => {
+      const h = $(el).attr('href') || '';
+      if (h.includes('drama') || h.includes('k-drama') || h.includes('serie') || h.includes('kdrama')) dramaLinks.push(h);
+    });
+    res.json({ url: wpUrl, htmlLen: html.length, title, articles, dramaLinksCount: dramaLinks.length, dramaLinksFirst5: dramaLinks.slice(0, 5), htmlPreview: html.slice(0, 800).replace(/\s+/g, ' '), ms: Date.now()-t0 });
+  } catch (err) {
+    res.json({ error: err.message, ms: Date.now()-t0 });
   }
-  res.json({ proxyConfigured: !!proxyUrl, domainCheck });
 });
 
 // ─── Landing Page ─────────────────────────────────────────────────────────────
