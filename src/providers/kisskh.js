@@ -197,8 +197,28 @@ async function getMeta(id, config = {}) {
   log.info('fetching meta', { id, url });
 
   try {
-    const data = await _apiGet(url, 8_000, config.proxyUrl);
+    // Fetch drama detail and cast in parallel
+    const [data, castData] = await Promise.all([
+      _apiGet(url, 8_000, config.proxyUrl),
+      _apiGet(`${API_BASE}/DramaList/Cast/${serieId}`, 6_000, config.proxyUrl).catch(() => null),
+    ]);
     if (!data) return { meta: null };
+
+    // Cast: from dedicated endpoint or from artists field in drama response
+    let cast;
+    if (Array.isArray(castData) && castData.length) {
+      cast = castData
+        .map(a => {
+          const name = a.name || a.title || '';
+          const char = a.characterName || a.character || '';
+          return char ? `${name} (${char})` : name;
+        })
+        .filter(Boolean);
+    } else if (Array.isArray(data.artists) && data.artists.length) {
+      cast = data.artists
+        .map(a => (typeof a === 'string' ? a : a.name || a.title || ''))
+        .filter(Boolean);
+    }
 
     const meta = {
       id,
@@ -211,15 +231,14 @@ async function getMeta(id, config = {}) {
       genres: Array.isArray(data.genres) && data.genres.length
         ? data.genres.map(g => (typeof g === 'string' ? g : g.name || g.title || '')).filter(Boolean)
         : (data.subCategory ? [data.subCategory] : undefined),
-      cast: Array.isArray(data.artists) && data.artists.length
-        ? data.artists.map(a => (typeof a === 'string' ? a : a.name || a.title || '')).filter(Boolean)
-        : undefined,
+      cast: cast && cast.length ? cast : undefined,
       serieId,
       videos: (data.episodes || []).map((ep, idx) => ({
         id: `${id}:${ep.id}`,
         title: ep.title || `Episode ${ep.number || idx + 1}`,
         season: Number(ep.season) || 1,
         episode: Number(ep.episode || ep.number || idx + 1),
+        overview: ep.description || ep.overview || ep.synopsis || '',
         thumbnail: ep.thumbnail || data.thumbnail,
         released: ep.releaseDate || '',
       })),

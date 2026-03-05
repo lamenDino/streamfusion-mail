@@ -5,6 +5,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [1.1.3] — 2026-03-05
+
+### Fixed
+- **KissKH — Cast**: aggiunta chiamata parallela a `GET /api/DramaList/Cast/{id}` in `getMeta()` per ottenere il cast completo con nome e nome del personaggio (`Nome (Personaggio)`); fallback su `data.artists` se l'endpoint non risponde
+- **KissKH — Episode overview**: mappato il campo `overview` su ogni video da `ep.description`, `ep.overview` o `ep.synopsis` (se presenti nella risposta API)
+- **Rama — Cast**: rimpiazzato il singolo selettore CSS con 3 strategie progressive:
+  1. Link con `href` contenente `/attori/`, `/actor/`, `/cast/`
+  2. Parsing testuale di `li.list-none` cercando etichette "Attori:", "Cast:", "Interpreti:" e splittando per virgola/punto e virgola
+  3. Elementi con classe contenente `cast` o `actor` come fallback
+- **Rama — Episode overview**: aggiunto campo `overview` sui video (vuoto per ora, pronto per espansione futura)
+
+---
+
 ## [1.1.2] — 2026-03-05
 
 ### Fixed

@@ -165,12 +165,33 @@ async function getMeta(id, config = {}) {
     if (g && g.length < 40) genres.push(g);
   });
 
-  // Cast
+  // Cast — strategy 1: links with /attori/ /actor/ /cast/ paths
   const cast = [];
-  $('[class*="cast"] .name, [class*="cast"] a, .characters .name, .actor-name, .staff a').each((_, el) => {
+  $('a[href*="/attori/"], a[href*="/actor/"], a[href*="/cast/"]').each((_, el) => {
     const c = $(el).text().trim();
-    if (c && c.length > 1 && c.length < 60) cast.push(c);
+    if (c && c.length > 1 && c.length < 60 && !cast.includes(c)) cast.push(c);
   });
+  // Cast — strategy 2: parse "Attori:" / "Cast:" / "Interpreti:" inside li.list-none
+  if (!cast.length) {
+    $('li.list-none, .info-list li').each((_, el) => {
+      const text = $(el).text().replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+      if (/\b(Attori|Cast|Interpreti|Stars?)\b/i.test(text)) {
+        // extract names after the colon
+        const after = text.replace(/^[^:]+:\s*/, '');
+        after.split(/[,;]/).forEach(name => {
+          const n = name.trim();
+          if (n && n.length > 1 && n.length < 60 && !cast.includes(n)) cast.push(n);
+        });
+      }
+    });
+  }
+  // Cast — strategy 3: any element with class containing 'cast' or 'actor'
+  if (!cast.length) {
+    $('[class*="cast"] a, [class*="actor"] a, [class*="actor"] .name, [class*="cast"] .name').each((_, el) => {
+      const c = $(el).text().trim();
+      if (c && c.length > 1 && c.length < 60 && !cast.includes(c)) cast.push(c);
+    });
+  }
 
   const descBody = $('div.font-light > div:nth-child(1)').text().trim()
     || $('.serie-description, .entry-content').first().text().trim();
@@ -207,6 +228,7 @@ async function getMeta(id, config = {}) {
     title: ep.title,
     season: 1,
     episode: idx + 1,
+    overview: ep.overview || '',
     thumbnail: ep.thumbnail || poster || '',
     released: year ? new Date(`${year}-01-01`).toISOString() : '',
   }));
