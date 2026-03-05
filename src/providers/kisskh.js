@@ -69,12 +69,16 @@ async function _headers(clientIp) {
  * @param {string} [proxyUrl]
  * @returns {Promise<any|null>}
  */
-async function _apiGet(url, timeout = 8_000, proxyUrl, clientIp) {
+/**
+ * @param {boolean} [skipFlare=false]  Skip FlareSolverr and go straight to direct
+ *   axios. Use for JSON API endpoints that are not CF-protected (list, detail).
+ */
+async function _apiGet(url, timeout = 8_000, proxyUrl, clientIp, skipFlare = false) {
   // 1. FlareSolverr session approach: primer visit + API call from same IP
   //    Hard 20 s cap — flareSolverrGetJSONWithPrimer can take up to ~110 s
   //    (two sequential sessionGet calls × 55 s MAX_TIMEOUT each), which makes
   //    Stremio time out before getMeta/catalog ever finishes.
-  if (getFlareSolverrUrl()) {
+  if (getFlareSolverrUrl() && !skipFlare) {
     log.info('trying FlareSolverr session approach', { url: url.slice(0, 80) });
     const FS_META_TIMEOUT = 15_000;
     const fsResult = await Promise.race([
@@ -144,7 +148,8 @@ async function _listCatalog(page, limit, proxyUrl, clientIp) {
   // country=2 → Korea only; status=0 → all (ongoing + completed)
   const url = `${API_BASE}/DramaList/List?page=${page}&type=1&sub=0&country=2&status=0&order=3&pageSize=${limit}`;
   log.info('list catalog', { url });
-  const data = await _apiGet(url, 8_000, proxyUrl, clientIp);
+  // skipFlare=true: DramaList/List is a plain JSON endpoint — no CF bypass needed
+  const data = await _apiGet(url, 8_000, proxyUrl, clientIp, true);
   if (!data || !data.data) return [];
   const basicItems = data.data.map(_mapItem);
   // Enrich all items in parallel with KissKH drama detail (not CF-protected, fast)
@@ -173,7 +178,8 @@ async function _searchCatalog(query, limit = 20, proxyUrl, clientIp) {
         // country=2 → Korea only; status=0 → ongoing + completed
         const url = `${API_BASE}/DramaList/List?page=${p}&type=1&sub=0&country=2&status=0&order=3&pageSize=30`;
         try {
-          const data = await _apiGet(url, 8_000, proxyUrl, clientIp);
+          // skipFlare=true: plain JSON list endpoint, no CF bypass needed
+          const data = await _apiGet(url, 8_000, proxyUrl, clientIp, true);
           if (!data || !data.data || !data.data.length) return [];
           return data.data
             .map(_mapItem)
