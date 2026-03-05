@@ -105,7 +105,12 @@ function stremioJson(res, data, { maxAge = 0 } = {}) {
  * Build a Stremio manifest tailored to the user's config.
  * - hideCatalogs: removes catalogs from the home screen
  * - providers: filters which provider catalogs appear
- * - cinemeta: adds "tt" idPrefix + "series"/"movie" types so Cinemeta IDs work
+ * - cinemeta: enables stream requests for Cinemeta IMDB IDs (tt*)
+ *
+ * When cinemeta=true we declare resources with per-resource idPrefixes so that:
+ *   • meta   only handles kisskh_* / rama_* → prevents "metadati non trovati"
+ *     on Cinemeta items (getMeta returns null for tt* — Stremio must NOT call us)
+ *   • stream handles kisskh_*, rama_*, AND tt* → Cinemeta → KissKH/Rama flow works
  */
 function buildManifest(config) {
   const { hideCatalogs = false, providers = 'all', cinemeta = false } = config || {};
@@ -117,15 +122,34 @@ function buildManifest(config) {
   else if (providers === 'drammatica') catalogs = catalogs.filter(c => c.id.startsWith('drammatica'));
   else if (providers === 'guardaserie') catalogs = catalogs.filter(c => c.id.startsWith('guardaserie'));
 
-  // Extra types / prefixes for Cinemeta support
-  const extraTypes    = cinemeta ? ['movie'] : [];
-  const extraPrefixes = cinemeta ? ['tt'] : [];
+  const nativeTypes    = manifest.types      || ['series', 'kdrama'];
+  const nativePrefixes = manifest.idPrefixes || ['kisskh_', 'rama_'];
+
+  if (!cinemeta) {
+    // Default: simple format, no Cinemeta support
+    return {
+      ...manifest,
+      catalogs: hideCatalogs ? [] : catalogs,
+    };
+  }
+
+  // cinemeta=true: use per-resource idPrefixes to avoid "metadati non trovati"
+  const streamTypes    = [...new Set([...nativeTypes, 'movie'])];
+  const streamPrefixes = [...new Set([...nativePrefixes, 'tt'])];
 
   return {
     ...manifest,
-    catalogs: hideCatalogs ? [] : catalogs,
-    types:      [...new Set([...(manifest.types || []), ...extraTypes])],
-    idPrefixes: [...new Set([...(manifest.idPrefixes || []), ...extraPrefixes])],
+    catalogs:   hideCatalogs ? [] : catalogs,
+    types:      streamTypes,
+    idPrefixes: streamPrefixes,
+    // Override resources with explicit per-resource idPrefixes:
+    //   meta  → only our own IDs (no tt*) so Stremio uses Cinemeta for meta
+    //   stream → our IDs + tt* so Cinemeta → KissKH/Rama works
+    resources: [
+      'catalog',
+      { name: 'meta',   types: nativeTypes,  idPrefixes: nativePrefixes },
+      { name: 'stream', types: streamTypes,   idPrefixes: streamPrefixes },
+    ],
   };
 }
 
