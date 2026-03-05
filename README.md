@@ -1,13 +1,248 @@
 # StreamFusion Mail
 
-![Version](https://img.shields.io/badge/version-1.2.0-blue?style=flat-square)
+![Version](https://img.shields.io/badge/version-1.3.2-blue?style=flat-square)
 ![Node](https://img.shields.io/badge/node-%3E%3D18-green?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square)
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fvitouchiha%2Fstreamfusion-mail)
 [![Vercel Status](https://img.shields.io/badge/vercel-deployed-brightgreen?style=flat-square&logo=vercel)](https://streamfusion-mail.vercel.app)
 
 > Aggregatore flussi streaming multi-provider per [Stremio](https://www.stremio.com/)  
-> Korean Drama & Asian Drama da **Rama Oriental Fansub** e **KissKH**
+> Korean Drama & Asian Drama con sub ITA — **KissKH · Rama · Drammatica · Guardaserie**
+>
+> 🔗 **Live:** https://streamfusion-mail.vercel.app  
+> 📦 **GitHub:** https://github.com/vitouchiha/streamfusion-mail  
+> 📡 **Manifest:** https://streamfusion-mail.vercel.app/manifest.json
+
+---
+
+## Descrizione tecnica
+
+**StreamFusion Mail** è un addon Stremio scritto in **Node.js 18+ (CommonJS)** che aggrega
+stream video da quattro sorgenti:
+
+| Provider | Sito | Tipo | Sub | Tecnica estrazione |
+|----------|------|------|-----|--------------------|
+| **KissKH** | `kisskh.co` | Asian Drama | ITA | Axios REST API + FlareSolverr |
+| **Rama** | `ramaorientalfansub.live` | Korean Drama | ITA | cloudscraper + cheerio + iframe |
+| **Drammatica** | `drammatica.it` | Korean Drama | ITA | cloudscraper + cheerio + multi-hoster |
+| **Guardaserie** | `guardaserie.re` | Korean Drama | ITA | cloudscraper + cheerio + SuperVideo/P,A,C,K |
+
+---
+
+## Architettura
+
+```
+StreamFusion Mail
+├── server.js                  ← Entry point (Express, routing Stremio protocol)
+├── manifest.json              ← Stremio manifest (id, version, catalogs, resources)
+├── src/
+│   ├── providers/
+│   │   ├── index.js           ← Aggregatore: routing, timeout, deduplication, IMDB lookup
+│   │   ├── kisskh.js          ← Provider KissKH (API + FlareSolverr)
+│   │   ├── rama.js            ← Provider Rama Oriental Fansub
+│   │   ├── drammatica.js      ← Provider Drammatica.it
+│   │   └── guardaserie.js     ← Provider Guardaserie.re
+│   └── utils/
+│       ├── logger.js          ← Logger strutturato (JSON prod / human dev)
+│       ├── cache.js           ← TTL cache LRU in-memory
+│       ├── fetcher.js         ← HTTP: cloudscraper + axios + timeout wrapper
+│       ├── flaresolverr.js    ← FlareSolverr client (session/primer per KissKH)
+│       ├── mediaflow.js       ← MediaFlow Proxy URL wrapper
+│       ├── tmdb.js            ← TMDB enrichment (poster, cast, rating)
+│       ├── subDecrypter.js    ← Decrittazione sottotitoli KissKH (AES-128-CBC)
+│       ├── config.js          ← Config decode/encode (AES-256-GCM in URL)
+│       └── titleHelper.js     ← Similarity, slug, ID normalization
+```
+
+---
+
+## Diagramma flusso logico
+
+```
+Stremio Client
+      │
+      ▼
+  GET /manifest.json
+  GET /catalog/:type/:id.json?extra=…
+  GET /meta/:type/:id.json
+  GET /stream/:type/:id.json
+      │
+      ▼
+  server.js (Express) — timeout 50s guard
+      │
+      ├─ type=series  / id=kisskh_*      ──► kisskh.js
+      │                                        └─ FlareSolverr session → REST API
+      │                                        └─ subtitle decrypt (AES-128-CBC)
+      │
+      ├─ type=kdrama  / id=rama_*        ──► rama.js
+      │                                        └─ cloudscraper + proxy
+      │                                        └─ iframe / .mp4 extraction + URL encode
+      │
+      ├─ type=kdrama  / id=drammatica_*  ──► drammatica.js
+      │                                        └─ cloudscraper + proxy
+      │                                        └─ SuperVideo P,A,C,K deobfuscation
+      │
+      ├─ type=kdrama  / id=guardaserie_* ──► guardaserie.js
+      │                                        └─ cloudscraper + proxy
+      │                                        └─ data-link / data-episode extraction
+      │                                        └─ SuperVideo P,A,C,K deobfuscation
+      │
+      └─ id=tt* (IMDB)  ──► Cinemeta lookup → title search su tutti i provider
+```
+
+---
+
+## Catalog disponibili
+
+| Catalog ID | Tipo | Provider | Descrizione |
+|-----------|------|----------|-------------|
+| `kisskh_catalog` | `series` | KissKH | Asian Drama (EN sub + ITA sub) |
+| `rama_catalog` | `kdrama` | Rama | Korean Drama sub ITA |
+| `drammatica_catalog` | `kdrama` | Drammatica | Korean Drama sub ITA |
+| `guardaserie_catalog` | `kdrama` | Guardaserie | Korean Drama sub ITA |
+
+---
+
+## Endpoint disponibili
+
+| Metodo | Path | Descrizione |
+|--------|------|-------------|
+| `GET` | `/` | Landing page con configurazione addon |
+| `GET` | `/:config/manifest.json` | Manifest Stremio (con config utente) |
+| `GET` | `/health` | Health check JSON |
+| `GET` | `/catalog/:type/:id.json` | Lista serie (con `?search=` e `?skip=`) |
+| `GET` | `/meta/:type/:id.json` | Dettaglio serie + episodi + TMDB enrichment |
+| `GET` | `/stream/:type/:id.json` | Stream per episodio (MP4/HLS) |
+| `GET` | `/debug/providers` | Reachability check (richiede `DEBUG_TOKEN`) |
+| `GET` | `/debug/flaresolverr` | FlareSolverr health + KissKH test |
+
+---
+
+## Esempio risposta JSON stream
+
+```json
+{
+  "streams": [
+    {
+      "name": "720p",
+      "description": "🚀 Rama · 📁 In Your Radiant Season - Episodio 1\n🇰🇷 Sub ITA",
+      "url": "https://server1.streamingrof.online/02-DRAMACOREANI/In%20Your%20Radiant%20Season%20(2026)/S01E01.mp4",
+      "behaviorHints": { "bingeGroup": "streamfusion-rama-rama_in-your-radiant-season" }
+    },
+    {
+      "name": "🚀 KissKH",
+      "description": "📁 Crash Landing on You - Episode 3\n🇰🇷 Sub ITA",
+      "url": "https://cdn.kisskh.co/stream/abc123.m3u8",
+      "behaviorHints": { "notWebReady": false, "bingeGroup": "streamfusion-kisskh-kisskh_1234" }
+    }
+  ]
+}
+```
+
+---
+
+## Configurazione utente (URL encode)
+
+La landing page genera un URL personalizzato con config AES-256-GCM encoded:
+
+```
+https://streamfusion-mail.vercel.app/BASE64_CONFIG/manifest.json
+```
+
+Opzioni configurabili dalla landing page:
+
+| Opzione | Descrizione |
+|---------|-------------|
+| **MediaFlow Proxy URL + Key** | Rerouta HLS/DASH attraverso il tuo proxy |
+| **HTTP/SOCKS5 Proxy** | Proxy residenziale per bypassare blocchi IP Cloudflare |
+| **TMDB API Key** | Poster HD, cast, generi, rating dai drama di Rama/Drammatica/Guardaserie |
+| **RPDB API Key** | Poster con rating IMDb sovrimpresso (richiede TMDB) |
+| **Provider attivi** | Scegli uno o tutti i provider |
+| **Nascondi cataloghi** | Rimuove i catalog dalla home Stremio |
+| **Cinemeta / IMDB** | Stream anche per drama cercati via Cinemeta |
+
+---
+
+## Sviluppo locale
+
+### Prerequisiti
+
+- Node.js ≥ 18
+- npm ≥ 9
+
+### Setup
+
+```bash
+# 1. Clona il repo
+git clone https://github.com/vitouchiha/streamfusion-mail.git
+cd streamfusion-mail
+
+# 2. Installa dipendenze
+npm install
+
+# 3. Avvia il server
+npm start
+# oppure in watch mode
+npm run dev
+```
+
+Il server sarà disponibile su `http://localhost:3000`  
+Installa su Stremio: `stremio://localhost:3000/manifest.json`
+
+---
+
+## Deploy su Vercel
+
+```bash
+npm i -g vercel
+vercel login
+vercel --prod
+```
+
+> **ℹ️ Timeout** — Vercel Hobby limita le function a 10s. Per stream KissKH (FlareSolverr)
+> e cataloghi con proxy è consigliato il piano **Pro** o un hosting alternativo
+> (Railway, Render, VPS).
+
+**Variabili d'ambiente da impostare su Vercel:**
+
+```bash
+vercel env add NODE_ENV             # → production
+vercel env add LOG_LEVEL            # → info
+vercel env add PROXY_URL            # → http://user:pass@host:port
+vercel env add FLARESOLVERR_URL     # → https://tuo-flaresolverr.koyeb.app
+vercel env add TMDB_API_KEY         # → la tua chiave TMDB v3
+vercel env add DEBUG_TOKEN          # → token segreto per /debug/*
+```
+
+---
+
+## Variabili d'ambiente
+
+| Variabile | Default | Descrizione |
+|-----------|---------|-------------|
+| `PORT` | `3000` | Porta server HTTP (locale) |
+| `NODE_ENV` | `development` | `production` abilita JSON logging |
+| `LOG_LEVEL` | `info` | `debug` · `info` · `warn` · `error` |
+| `PROXY_URL` | — | Proxy HTTP/SOCKS5 per cloudscraper (es. `http://u:p@host:port`) |
+| `FLARESOLVERR_URL` | — | URL FlareSolverr per KissKH (es. `https://fs.koyeb.app`) |
+| `CATALOG_TIMEOUT` | `25000` | Timeout catalog handler (ms) |
+| `META_TIMEOUT` | `30000` | Timeout meta handler (ms) |
+| `STREAM_TIMEOUT` | `45000` | Timeout stream handler (ms) |
+| `SERVERLESS_TIMEOUT` | `50000` | Timeout globale serverless guard (ms) |
+| `DEBUG_TOKEN` | — | Token auth per endpoint `/debug/*` |
+| `CONFIG_SECRET` | _(interno)_ | Chiave AES-256-GCM per encrypt config in URL |
+
+---
+
+## Licenza
+
+MIT — vedi [LICENSE](LICENSE)
+
+---
+
+> ℹ️ Questo addon accede a contenuti pubblicamente disponibili su internet.  
+> Non ospita né distribuisce alcun contenuto multimediale.
+
 >
 > 🔗 **Live:** https://streamfusion-mail.vercel.app  
 > 📦 **GitHub:** https://github.com/vitouchiha/streamfusion-mail  

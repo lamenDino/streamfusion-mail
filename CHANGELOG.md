@@ -5,6 +5,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [1.3.2] — 2026-03-05
+
+### Fixed (stream Rama — bug critico)
+- **`wrapStreamUrl` import mancante in `rama.js`** — la funzione era chiamata ma mai importata da `../utils/mediaflow`; causava `ReferenceError` a runtime → tutti i flussi Rama ritornavano `{"streams":[]}` silenziosamente. Ora importata correttamente.
+- **Selettore iframe troppo specifico** — il selettore `div.episode-player-box iframe` non matchava le pagine episodio di Rama (che usano `.wp-post-content` come wrapper). Sostituito con selettore ampio multi-classe + fallback su qualunque iframe non pubblicitario.
+- **URL con spazi non encodati** — i file su `streamingrof.online` hanno spazi nel path (es. `In Your Radiant Season - S01E02.mp4`). Il regex `[^"'\s]+` si fermava al primo spazio. Nuovo regex `["'](https://…mp4)["']` e encoding `space → %20`, `[ → %5B`, `] → %5D`.
+
+### Fixed (catalog — da commit e6e91e4)
+- **Cache vuota propagata a Stremio** — catalog con 0 risultati veniva servito con `Cache-Control: max-age=300`; Stremio metteva in cache la risposta vuota del cold-start. Ora `max-age=0` quando `metas.length === 0`.
+- **CATALOG_TIMEOUT troppo basso** — 9 s non bastava per cold-start Vercel + Cloudflare bypass. Portato a 25 s.
+- **Routing catalog Drammatica/Guardaserie** — la condizione `rama_catalog || type === 'kdrama'` instradava tutti i catalog `kdrama` a Rama, bypasando Drammatica e Guardaserie. Rimossa la fallback `type` — ogni catalog ora usa solo l'ID prefix.
+
+### Added (stream engine — da commit 0ca4d57)
+- **Guardaserie — pattern estrazione episodi da Streamvix** — `_extractEpisodes()` ora usa 4 pattern in cascata:
+  - A: `data-episode` + `data-url` (layout legacy)
+  - B: `id="serie-S_E"` + `data-link` (layout attuale)
+  - C: regex raw sull'HTML per `data-link`
+  - D: href fallback
+- **SuperVideo P,A,C,K deobfuscator** — `_resolveSupervideo()` aggiunto a Guardaserie e Drammatica; decodifica embed JavaScript P,A,C,K per estrarre il vero URL HLS/MP4.
+- **Multi-hoster shortcircuit Guardaserie** — quando gli embed sono già estratti dagli attributi HTML, `_getStreamsFromEmbeds()` evita un secondo fetch della pagina episodio.
+
+---
+
 ## [1.3.1] — 2026-03-05
 
 ### Fixed (Rama meta enrichment)
