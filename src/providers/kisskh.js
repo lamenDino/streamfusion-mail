@@ -497,7 +497,16 @@ async function getStreams(stremioId, config = {}) {
     } else {
       // 2. Fallback: browser extraction (intercepts m3u8 via Puppeteer)
       log.info('direct API failed, falling back to browser extraction', { serieId, episodeId });
-      const { streamUrl: extractedUrl, subApiUrl } = await _extractStreamAndSubs(serieId, episodeId);
+      const BROWSER_STREAM_TIMEOUT = 20_000;
+      const browserResult = await withTimeout(
+        _extractStreamAndSubs(serieId, episodeId),
+        BROWSER_STREAM_TIMEOUT,
+        'kisskh.browserStreamExtraction'
+      ).catch(() => {
+        log.warn('browser stream extraction timed out (20s cap)', { serieId, episodeId });
+        return { streamUrl: null, subApiUrl: null };
+      });
+      const { streamUrl: extractedUrl, subApiUrl } = browserResult;
       rawUrl    = extractedUrl;
       if (!rawUrl) {
         log.warn('no stream found via browser', { serieId, episodeId });
@@ -562,21 +571,38 @@ async function _fetchStreamViaPngApi(episodeId, proxyUrl) {
   const url = `${API_BASE}/DramaList/Episode/${episodeId}.png?err=false&ts=null&time=null&kkey=${EPISODE_KKEY}`;
   const proxyAgent = proxyUrl ? makeProxyAgent(proxyUrl) : getProxyAgent();
   const proxyConfig = proxyAgent ? { httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false } : {};
+
+  const parsePngPayload = (payload) => {
+    let json = payload;
+    if (typeof payload === 'string') {
+      try { json = JSON.parse(payload); } catch { return null; }
+    }
+    if (!json || typeof json !== 'object') return null;
+    const videoUrl = json.Video || json.video;
+    if (!videoUrl || !videoUrl.startsWith('http')) return null;
+    return { streamUrl: videoUrl, subApiUrl: `${API_BASE}/Sub/${episodeId}?kkey=${SUB_KKEY}` };
+  };
+
+  // Try CF Worker first if available (often bypasses anti-bot checks for this endpoint)
+  if (getCfWorkerUrl()) {
+    const workerData = await _cfWorkerGet(url, 8_000);
+    const parsed = parsePngPayload(workerData);
+    if (parsed) {
+      log.info('.png API stream found via CF Worker', { episodeId, url: parsed.streamUrl.slice(0, 80) });
+      return parsed;
+    }
+  }
+
   try {
     const { data } = await axios.get(url, {
       headers: { ..._baseHeaders(), 'Accept': 'application/json, text/plain, */*' },
       timeout: 8_000,
       ...proxyConfig,
     });
-    let json = data;
-    if (typeof data === 'string') {
-      try { json = JSON.parse(data); } catch { return null; }
-    }
-    if (!json || typeof json !== 'object') return null;
-    const videoUrl = json.Video || json.video;
-    if (!videoUrl || !videoUrl.startsWith('http')) return null;
-    log.info(`.png API stream found`, { episodeId, url: videoUrl.slice(0, 80) });
-    return { streamUrl: videoUrl, subApiUrl: `${API_BASE}/Sub/${episodeId}?kkey=${SUB_KKEY}` };
+    const parsed = parsePngPayload(data);
+    if (!parsed) return null;
+    log.info('.png API stream found', { episodeId, url: parsed.streamUrl.slice(0, 80) });
+    return parsed;
   } catch (err) {
     log.warn(`_fetchStreamViaPngApi failed: ${err.message}`, { episodeId });
     return null;

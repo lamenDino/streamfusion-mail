@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [1.4.8] — 2026-03-06
+
+### Fixed
+- **Timeout stream su Vercel (0 risultati da Cinemeta/KissKH)** — quando la `.png` API restituiva 403, il fallback Puppeteer poteva superare il budget serverless e terminare con `504 Gateway Timeout`. Aggiunto cap hard di 20s alla browser extraction in `getStreams` per evitare richieste bloccate.
+- **Path `.png` più robusto** — `_fetchStreamViaPngApi` ora tenta anche via **CF Worker** prima della chiamata diretta axios. Questo recupera stream in ambienti dove la richiesta diretta è bloccata ma il Worker edge è accettato.
+
+---
+
 ## [1.4.7] — 2026-03-06
 
 ### Fixed
