@@ -503,6 +503,7 @@ async function getStreams(stremioId, config = {}) {
   // Fetch series title for display (typically instant from metaCache)
   const metaResult = await getMeta(seriesPart, config).catch(() => ({ meta: null }));
   const seriesTitle = metaResult?.meta?.name || null;
+  const episodeNumHint = _episodeNumberFromMeta(metaResult?.meta?.videos, episodeId);
 
   const cacheKey = `stream:${serieId}:${episodeId}`;
   const cached = streamCache.get(cacheKey);
@@ -553,8 +554,15 @@ async function getStreams(stremioId, config = {}) {
     }
 
     if (!rawUrl) {
-      log.warn('no stream found', { serieId, episodeId });
-      return [];
+      const predicted = _predictHlsUrl(serieId, episodeNumHint);
+      if (predicted) {
+        rawUrl = predicted;
+        subtitles = await _getSubtitlesFromApiUrl(`${API_BASE}/Sub/${episodeId}?kkey=${SUB_KKEY}`, serieId, episodeId);
+        log.warn('using heuristic predicted HLS URL fallback', { serieId, episodeId, episodeNumHint, url: predicted.slice(0, 90) });
+      } else {
+        log.warn('no stream found', { serieId, episodeId });
+        return [];
+      }
     }
     streamCache.set(cacheKey, { url: rawUrl, subtitles });
   }
@@ -588,6 +596,19 @@ async function getStreams(stremioId, config = {}) {
       },
     },
   ];
+}
+
+function _episodeNumberFromMeta(videos, episodeId) {
+  if (!Array.isArray(videos) || !episodeId) return null;
+  const ep = videos.find(v => String(extractEpisodeNumericId(v.id || '')) === String(episodeId));
+  if (!ep) return null;
+  return Number(ep.episode) || Number(ep.number) || null;
+}
+
+function _predictHlsUrl(serieId, episodeNum) {
+  if (!serieId || !episodeNum) return null;
+  // Common KissKH pattern observed in production/local captures
+  return `https://hls.cdnvideo11.shop/hls07/${serieId}/Ep${episodeNum}_index.m3u8`;
 }
 
 async function _fetchStreamFromEpisodeHtml(serieId, episodeId, proxyUrl) {

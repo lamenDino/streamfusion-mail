@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [1.5.3] — 2026-03-06
+
+### Added
+- **Heuristic HLS fallback per KissKH** — se i percorsi stream standard falliscono (`.png`, legacy API, HTML, browser), il provider costruisce un URL HLS predittivo usando `serieId + numero episodio` dai metadata (`https://hls.cdnvideo11.shop/hls07/{serieId}/Ep{N}_index.m3u8`). Evita risposte vuote (`streams: []`) nei casi in cui il source path è temporaneamente bloccato su Vercel.
+
+---
+
 ## [1.5.2] — 2026-03-06
 
 ### Added
