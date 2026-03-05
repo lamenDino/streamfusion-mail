@@ -57,23 +57,59 @@ async function _headers(clientIp) {
 }
 
 /**
+ * CF Worker URL for kisskh.co proxy.
+ * Set CF_WORKER_URL env var (and optionally CF_WORKER_AUTH) on Vercel.
+ *
  * GET helper for KissKH API.
  *
  * Priority:
+ *   0. CF Worker (fast, runs on Cloudflare edge — bypasses CF bot protection
+ *      because the Worker is trusted on the same Cloudflare network as kisskh.co)
  *   1. FlareSolverr session (primer visit → cf_clearance → API call from same Railway IP)
  *   2. Direct axios without cookie (fast, works if KissKH doesn't block the request)
- *   3. Direct axios with CF cookie from env (slow but sometimes works)
+ *   3. Direct axios with CF cookie from env
  *
  * @param {string} url
  * @param {number} [timeout=8000]
  * @param {string} [proxyUrl]
+ * @param {string|undefined} [clientIp]
+ * @param {boolean} [skipFlare=false]  Skip Worker+FlareSolverr; use for plain JSON
+ *   endpoints that are never CF-challenged (DramaList/List, DramaList/Drama).
  * @returns {Promise<any|null>}
  */
-/**
- * @param {boolean} [skipFlare=false]  Skip FlareSolverr and go straight to direct
- *   axios. Use for JSON API endpoints that are not CF-protected (list, detail).
- */
+function getCfWorkerUrl() {
+  return (process.env.CF_WORKER_URL || '').trim() || null;
+}
+
+async function _cfWorkerGet(targetUrl, timeout = 8_000, extraParams = {}) {
+  const base = getCfWorkerUrl();
+  if (!base) return null;
+  const workerUrl = new URL(base.replace(/\/$/, ''));
+  workerUrl.searchParams.set('url', targetUrl);
+  for (const [k, v] of Object.entries(extraParams)) workerUrl.searchParams.set(k, v);
+  const headers = {};
+  const auth = (process.env.CF_WORKER_AUTH || '').trim();
+  if (auth) headers['x-worker-auth'] = auth;
+  try {
+    const { data } = await axios.get(workerUrl.toString(), { headers, timeout });
+    return (data && typeof data === 'object') ? data : null;
+  } catch (err) {
+    log.warn(`CF Worker request failed: ${err.message}`, { url: targetUrl.slice(0, 80) });
+    return null;
+  }
+}
+
 async function _apiGet(url, timeout = 8_000, proxyUrl, clientIp, skipFlare = false) {
+  // 0. CF Worker (fast — no 15s FlareSolverr wait; Worker runs on Cloudflare edge)
+  if (getCfWorkerUrl() && !skipFlare) {
+    const result = await _cfWorkerGet(url, Math.min(timeout, 8_000));
+    if (result) {
+      log.info('CF Worker ✓', { url: url.slice(0, 80) });
+      return result;
+    }
+    log.warn('CF Worker returned null, falling through to FlareSolverr/axios');
+  }
+
   // 1. FlareSolverr session approach: primer visit + API call from same IP
   //    Hard 20 s cap — flareSolverrGetJSONWithPrimer can take up to ~110 s
   //    (two sequential sessionGet calls × 55 s MAX_TIMEOUT each), which makes
@@ -499,6 +535,24 @@ async function _fetchStreamViaApi(serieId, episodeId, proxyUrl) {
     try { return JSON.parse(t.replace(/<[^>]+>/g, '').trim()); } catch {}
     return null;
   };
+
+  // ── 0. CF Worker approach (fast, no session required) ─────────────────────
+  //   Proxies the episode API via a Cloudflare Worker. Since the Worker runs on
+  //   Cloudflare's own network, kisskh.co does not apply CF Bot Management to it.
+  if (getCfWorkerUrl()) {
+    const dramaReferer = `${SITE_BASE}/Drama/Any/Episode-Any?id=${serieId}&ep=${episodeId}`;
+    for (const [type, source] of [[2, 1], [1, 0], [2, 0], [1, 1]]) {
+      const epUrl = `${API_BASE}/DramaList/Episode/${episodeId}?type=${type}&sub=0&source=${source}&quality=auto`;
+      log.debug(`CF Worker stream type=${type} source=${source}`, { episodeId });
+      const data = await _cfWorkerGet(epUrl, 8_000, { xhr: '1', referer: dramaReferer });
+      const result = data ? _parseVideoData(data) : null;
+      if (result) {
+        log.info(`CF Worker stream found (type=${type},source=${source})`, { url: result.streamUrl.slice(0, 80) });
+        return result;
+      }
+    }
+    log.warn('CF Worker: no stream found, falling through to FlareSolverr/axios');
+  }
 
   // ── 1. FlareSolverr 3-step session approach (hard 25 s cap) ──────────────
   //   If FlareSolverr is configured, try it first with a strict timeout so we
