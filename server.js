@@ -239,24 +239,29 @@ app.get('/debug/flaresolverr', async (req, res) => {
       const catData = parseBody(catBody);
       result.kisskhCatalogApi = { gotJSON: !!catData, count: catData?.data?.length ?? 0, ms: Date.now()-tC };
 
-      // Episode stream API
+      // Episode stream API — 3-step: primer + drama page + episode API with drama Referer
       const tE = Date.now();
-      // Use a fresh episode ID from a real series in the catalog if available
-      let realEpId = testEpId;
+      // Get first real series + episode from catalog
+      let realSerieId = '12203'; let realEpId = testEpId;
       if (catData?.data?.length) {
-        const firstSeriesId = catData.data[0].id;
+        const firstSeriesId = catData.data[0].id; realSerieId = String(firstSeriesId);
         const detailBody = await sessionGet(`https://kisskh.co/api/DramaList/Drama/${firstSeriesId}?isq=false`, sessionId, JSON_HEADERS);
         const detailData = parseBody(detailBody);
         const firstEp = detailData?.episodes?.[0];
         if (firstEp?.id) realEpId = String(firstEp.id);
       }
-      const epBody = await sessionGet(`https://kisskh.co/api/DramaList/Episode/${realEpId}?type=2&sub=0&source=1&quality=auto`, sessionId, JSON_HEADERS);
+      // Visit drama page to establish context
+      const dramaPage = `https://kisskh.co/Drama/Any/Episode-Any?id=${realSerieId}&ep=${realEpId}`;
+      await sessionGet(dramaPage, sessionId).catch(() => null);
+      // Now call episode API with drama page as Referer
+      const epApiHeaders = { 'Accept': 'application/json, text/plain, */*', 'Referer': dramaPage, 'Origin': 'https://kisskh.co', 'X-Requested-With': 'XMLHttpRequest' };
+      const epBody = await sessionGet(`https://kisskh.co/api/DramaList/Episode/${realEpId}?type=2&sub=0&source=1&quality=auto`, sessionId, epApiHeaders);
       const epData = parseBody(epBody);
       result.kisskhEpisodeApi = {
-        testedEpId: realEpId,
+        testedEpId: realEpId, testedSerieId: realSerieId,
         gotJSON: !!epData, hasVideo: !!(epData?.Video || epData?.video),
         videoPreview: epData?.Video ? String(epData.Video).slice(0, 80) : null,
-        bodyPreview: epBody ? epBody.replace(/<[^>]+>/g, '').trim().slice(0, 200) : null,
+        bodyPreview: !epData && epBody ? epBody.replace(/<[^>]+>/g,'').trim().slice(0,150) : undefined,
         ms: Date.now()-tE,
       };
     }

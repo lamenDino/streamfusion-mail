@@ -21,7 +21,7 @@ const { TTLCache } = require('../utils/cache');
 const { cleanTitleForSearch, titleSimilarity, extractEpisodeNumericId } = require('../utils/titleHelper');
 const { withTimeout, makeProxyAgent, getProxyAgent } = require('../utils/fetcher');
 const { wrapStreamUrl } = require('../utils/mediaflow');
-const { flareSolverrGetJSONWithPrimer, getFlareSolverrUrl } = require('../utils/flaresolverr');
+const { flareSolverrGetJSONWithPrimer, createSession, destroySession, sessionGet, getFlareSolverrUrl } = require('../utils/flaresolverr');
 const { createLogger } = require('../utils/logger');
 
 const log = createLogger('kisskh');
@@ -324,19 +324,69 @@ async function _fetchStreamViaApi(serieId, episodeId, proxyUrl) {
     return null;
   };
 
-  // ── 1. FlareSolverr (session + primer approach) ──────────────────────────
+  // Helper: parse FlareSolverr response body — Chrome wraps JSON in <pre> tags
+  const _parseBody = (b) => {
+    if (!b) return null;
+    const t = b.trim();
+    if (t.startsWith('{') || t.startsWith('[')) { try { return JSON.parse(t); } catch {} }
+    const m = t.match(/<pre[^>]*>([\s\S]*?)<\/pre>/i);
+    if (m) { try { return JSON.parse(m[1]); } catch {} }
+    try { return JSON.parse(t.replace(/<[^>]+>/g, '').trim()); } catch {}
+    return null;
+  };
+
+  // ── 1. FlareSolverr 3-step session approach ──────────────────────────────
+  //   Step A: primer (kisskh.co homepage → cf_clearance cookie)
+  //   Step B: drama page visit (get drama-scoped cookies/tokens, establish Referer)
+  //   Step C: episode API call with Referer = drama page (returns JSON video URL)
   if (getFlareSolverrUrl()) {
-    for (const [type, source] of [[2, 1], [1, 0]]) {
-      const url = `${API_BASE}/DramaList/Episode/${episodeId}?type=${type}&sub=0&source=${source}&quality=auto`;
-      log.info(`FlareSolverr session stream API type=${type} source=${source}`, { episodeId });
-      const data = await flareSolverrGetJSONWithPrimer(url);
-      const result = data ? _parseVideoData(data) : null;
-      if (result) {
-        log.info(`FlareSolverr session stream found (type=${type},source=${source})`, { episodeId, url: result.streamUrl.slice(0, 80) });
-        return result;
-      }
+    const sessionId = await createSession().catch(() => null);
+    if (!sessionId) {
+      log.warn('FlareSolverr: createSession failed');
+      return null;
     }
-    log.warn('FlareSolverr session: no stream URL found', { episodeId });
+
+    try {
+      // Step A: CF primer
+      log.info('FS stream: visiting primer', { episodeId });
+      const primerBody = await sessionGet(SITE_BASE + '/', sessionId).catch(() => null);
+      const isCFBlock = !primerBody ||
+        primerBody.includes('Just a moment') ||
+        primerBody.includes('Checking your browser') ||
+        primerBody.includes('data-cf-challenge') ||
+        (primerBody.includes('www.cloudflare.com') && primerBody.length < 50_000);
+      if (isCFBlock) {
+        log.warn('FS stream: CF challenge NOT resolved on primer');
+        return null;
+      }
+
+      // Step B: visit drama episode page (establishes Referer context + drama cookies)
+      const dramaPageUrl = `${SITE_BASE}/Drama/Any/Episode-Any?id=${serieId}&ep=${episodeId}`;
+      log.info('FS stream: visiting drama page', { dramaPageUrl });
+      await sessionGet(dramaPageUrl, sessionId).catch(() => null);  // best-effort
+
+      // Step C: episode API with drama page as Referer
+      const apiHeaders = {
+        'Accept': 'application/json, text/plain, */*',
+        'Referer': dramaPageUrl,
+        'Origin': SITE_BASE,
+        'X-Requested-With': 'XMLHttpRequest',
+      };
+      for (const [type, source] of [[2, 1], [1, 0]]) {
+        const url = `${API_BASE}/DramaList/Episode/${episodeId}?type=${type}&sub=0&source=${source}&quality=auto`;
+        log.info(`FS stream: episode API type=${type} source=${source}`, { episodeId });
+        const body = await sessionGet(url, sessionId, apiHeaders).catch(() => null);
+        const data = _parseBody(body);
+        const result = data ? _parseVideoData(data) : null;
+        if (result) {
+          log.info(`FS stream: found (type=${type},source=${source})`, { url: result.streamUrl.slice(0, 80) });
+          return result;
+        }
+      }
+      log.warn('FS stream: no video URL found in any API variant', { episodeId });
+    } finally {
+      destroySession(sessionId);
+    }
     return null;
   }
 
