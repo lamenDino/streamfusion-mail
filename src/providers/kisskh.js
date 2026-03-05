@@ -21,7 +21,7 @@ const { TTLCache } = require('../utils/cache');
 const { cleanTitleForSearch, titleSimilarity, extractEpisodeNumericId } = require('../utils/titleHelper');
 const { withTimeout, makeProxyAgent, getProxyAgent } = require('../utils/fetcher');
 const { wrapStreamUrl } = require('../utils/mediaflow');
-const { flareSolverrGetJSON, getFlareSolverrUrl } = require('../utils/flaresolverr');
+const { flareSolverrGetJSONWithPrimer, getFlareSolverrUrl } = require('../utils/flaresolverr');
 const { createLogger } = require('../utils/logger');
 
 const log = createLogger('kisskh');
@@ -53,13 +53,12 @@ async function _headers() {
 }
 
 /**
- * GET helper with three-tier fallback strategy:
- *   1. Direct axios (fast, often blocked by CF on Vercel datacenter IP)
- *   2. Axios + CF cookie (same IP issue, but cookie might help marginally)
- *   3. FlareSolverr + Webshare residential proxy (SLOW ~15s but bypasses CF)
+ * GET helper for KissKH API.
  *
- * Strategy 3 is the reliable path for KissKH since Vercel's datacenter IPs
- * are blocked by Cloudflare Managed Challenge regardless of cookies.
+ * Priority:
+ *   1. FlareSolverr session (primer visit → cf_clearance → API call from same Railway IP)
+ *   2. Direct axios without cookie (fast, works if KissKH doesn't block the request)
+ *   3. Direct axios with CF cookie from env (slow but sometimes works)
  *
  * @param {string} url
  * @param {number} [timeout=8000]
@@ -67,53 +66,40 @@ async function _headers() {
  * @returns {Promise<any|null>}
  */
 async function _apiGet(url, timeout = 8_000, proxyUrl) {
-  const effectiveProxy = proxyUrl || (process.env.PROXY_URL || '').trim() || null;
-  const proxyAgent = effectiveProxy ? makeProxyAgent(effectiveProxy) : getProxyAgent();
-  const proxyConfig = proxyAgent ? { httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false } : {};
+  // 1. FlareSolverr session approach: primer visit + API call from same IP
+  if (getFlareSolverrUrl()) {
+    log.info('trying FlareSolverr session approach', { url: url.slice(0, 80) });
+    const fsResult = await flareSolverrGetJSONWithPrimer(url).catch(err => {
+      log.warn(`FlareSolverr session failed: ${err.message}`);
+      return null;
+    });
+    if (fsResult) {
+      log.info('FlareSolverr session succeeded ✓');
+      return fsResult;
+    }
+    log.warn('FlareSolverr session returned null, falling back to direct axios');
+  }
 
-  // 1. Direct axios — fast, works if proxy has clean residential IP
+  // 2. Direct axios (fast path — no proxy, no cookie)
+  const proxyAgent = proxyUrl ? makeProxyAgent(proxyUrl) : getProxyAgent();
+  const proxyConfig = proxyAgent ? { httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false } : {};
   try {
     const { data } = await axios.get(url, { headers: _baseHeaders(), timeout, ...proxyConfig });
-    log.debug('_apiGet: direct axios success');
     return data;
   } catch (err) {
     const status = err?.response?.status;
-    log.warn(`_apiGet: direct failed (status=${status ?? 'network'}), trying CF cookie`, { url });
+    log.warn(`Direct axios failed (status=${status ?? 'network'}), retrying with CF cookie`, { url });
   }
 
-  // 2. Axios + CF cookie (same datacenter IP, adds minimal benefit but try anyway)
+  // 3. Retry with CF cookie
   try {
     const headers = await _headers();
     const { data } = await axios.get(url, { headers, timeout, ...proxyConfig });
-    log.debug('_apiGet: axios+cookie success');
     return data;
   } catch (err2) {
-    log.warn(`_apiGet: axios+cookie failed: ${err2.message}, trying FlareSolverr+proxy`, { url });
+    log.error(`All API attempts failed: ${err2.message}`, { url });
+    return null;
   }
-
-  // 3. FlareSolverr + residential proxy — the reliable path for CF-blocked endpoints
-  //    FlareSolverr launches Chrome, routes through Webshare (residential IP),
-  //    solves CF challenge, and returns the JSON response.
-  if (getFlareSolverrUrl()) {
-    const fsProxy = effectiveProxy ? _toStickyProxy(effectiveProxy) : null;
-    log.info(`_apiGet: trying FlareSolverr${fsProxy ? '+proxy' : ''} for ${url.slice(0, 80)}`);
-    const json = await flareSolverrGetJSON(url, Math.max(timeout, 55_000), fsProxy);
-    if (json) {
-      log.info('_apiGet: FlareSolverr success');
-      return json;
-    }
-    log.warn('_apiGet: FlareSolverr also failed');
-  }
-
-  return null;
-}
-
-/**
- * Convert a rotating proxy URL to a sticky-session one.
- * Webshare: http://user-rotate:pass@host → http://user-rotate-session-ksfix:pass@host
- */
-function _toStickyProxy(proxyUrl) {
-  return proxyUrl.replace(/(:\/\/[^:]+?)(:)/, '$1-session-ksfix$2');
 }
 
 // ─── Catalog ─────────────────────────────────────────────────────────────────
@@ -267,7 +253,7 @@ async function getStreams(stremioId, config = {}) {
     rawUrl = cached.url;
     subtitles = cached.subtitles;
   } else {
-    // 1. Try direct API (fast, no browser needed) — works when cf_clearance cookie is set
+    // 1. Try direct API (FlareSolverr session → cf_clearance → JSON response)
     log.info('trying direct API stream extraction', { serieId, episodeId });
     const apiResult = await _fetchStreamViaApi(serieId, episodeId, config.proxyUrl);
 
@@ -338,20 +324,19 @@ async function _fetchStreamViaApi(serieId, episodeId, proxyUrl) {
     return null;
   };
 
-  // ── 1. FlareSolverr ──────────────────────────────────────────────────────
+  // ── 1. FlareSolverr (session + primer approach) ──────────────────────────
   if (getFlareSolverrUrl()) {
     for (const [type, source] of [[2, 1], [1, 0]]) {
       const url = `${API_BASE}/DramaList/Episode/${episodeId}?type=${type}&sub=0&source=${source}&quality=auto`;
-      log.info(`FlareSolverr stream API type=${type} source=${source}`, { episodeId });
-      const data = await flareSolverrGetJSON(url);
+      log.info(`FlareSolverr session stream API type=${type} source=${source}`, { episodeId });
+      const data = await flareSolverrGetJSONWithPrimer(url);
       const result = data ? _parseVideoData(data) : null;
       if (result) {
-        log.info(`FlareSolverr stream found (type=${type},source=${source})`, { episodeId, url: result.streamUrl.slice(0, 80) });
+        log.info(`FlareSolverr session stream found (type=${type},source=${source})`, { episodeId, url: result.streamUrl.slice(0, 80) });
         return result;
       }
     }
-    log.warn('FlareSolverr: no stream URL found', { episodeId });
-    // Don't fall through to cookie attempt — both use the same API endpoints
+    log.warn('FlareSolverr session: no stream URL found', { episodeId });
     return null;
   }
 

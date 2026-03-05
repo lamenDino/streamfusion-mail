@@ -179,17 +179,9 @@ app.get('/debug/providers', async (req, res) => {
 });
 
 app.get('/debug/flaresolverr', async (req, res) => {
-  const { flareSolverrGetJSON, flareSolverrGetCookies, getFlareSolverrUrl } = require('./src/utils/flaresolverr');
+  const { getFlareSolverrUrl } = require('./src/utils/flaresolverr');
   const url = getFlareSolverrUrl();
-  const proxyRaw = (process.env.PROXY_URL || '').trim();
-  // Sticky-session proxy (same exit IP for challenge + API calls)
-  const stickyProxy = proxyRaw ? proxyRaw.replace(/(:\\/\\/[^:]+?)(:)/, '$1-session-ksfix$2') : null;
-
-  const result = {
-    FLARESOLVERR_URL: url ? url.slice(0, 60) : null,
-    configured: !!url,
-    proxy: stickyProxy ? stickyProxy.split('@')[1] || '(set)' : null,
-  };
+  const result = { FLARESOLVERR_URL: url ? url.slice(0, 60) : null, configured: !!url };
   if (!url) return res.json(result);
 
   const t0 = Date.now();
@@ -202,55 +194,36 @@ app.get('/debug/flaresolverr', async (req, res) => {
     result.health = { error: err.message, ms: Date.now() - t0 };
   }
 
-  // Test 2: Catalog API WITHOUT proxy (baseline — datacenter IP)
+  // Test 2: KissKH episode API via FlareSolverr SESSION
+  // (primer visit to kisskh.co → cf_clearance in session → API call with that cookie)
   const t1 = Date.now();
-  const catalogUrl = 'https://kisskh.co/api/DramaList/List?page=1&type=1&sub=0&country=2&status=2&order=3&pageSize=5';
+  const testEpId = req.query.ep || '202614'; // default: Ep1 of series 12203
   try {
-    const data = await flareSolverrGetJSON(catalogUrl, 55_000, null);
-    result.catalogNoProxy = {
+    const { flareSolverrGetJSONWithPrimer, createSession, destroySession, sessionGet } = require('./src/utils/flaresolverr');
+
+    // Test A: session primer approach
+    const apiUrl = `https://kisskh.co/api/DramaList/Episode/${testEpId}?type=2&sub=0&source=1&quality=auto`;
+    const data = await flareSolverrGetJSONWithPrimer(apiUrl);
+    result.kisskhEpisodeApi = {
+      mode: 'session+primer',
+      episodeId: testEpId,
       gotJSON: !!data,
-      count: data?.data?.length ?? null,
+      hasVideo: !!(data?.Video || data?.video),
+      videoPreview: data?.Video ? String(data.Video).slice(0, 80) : null,
       ms: Date.now() - t1,
     };
+
+    // Test B: also verify catalog search works
+    const t2 = Date.now();
+    const catalogUrl = 'https://kisskh.co/api/DramaList/List?page=1&type=1&sub=0&country=2&status=2&order=3&pageSize=5';
+    const catalogData = await flareSolverrGetJSONWithPrimer(catalogUrl);
+    result.kisskhCatalogApi = {
+      gotJSON: !!catalogData,
+      count: catalogData?.data?.length ?? 0,
+      ms: Date.now() - t2,
+    };
   } catch (err) {
-    result.catalogNoProxy = { error: err.message, ms: Date.now() - t1 };
-  }
-
-  // Test 3: Catalog API WITH Webshare proxy (residential IP — should bypass CF)
-  const t2 = Date.now();
-  if (stickyProxy) {
-    try {
-      const data = await flareSolverrGetJSON(catalogUrl, 55_000, stickyProxy);
-      result.catalogWithProxy = {
-        gotJSON: !!data,
-        count: data?.data?.length ?? null,
-        firstTitle: data?.data?.[0]?.title ?? null,
-        ms: Date.now() - t2,
-      };
-    } catch (err) {
-      result.catalogWithProxy = { error: err.message, ms: Date.now() - t2 };
-    }
-  } else {
-    result.catalogWithProxy = { skipped: 'PROXY_URL not set' };
-  }
-
-  // Test 4: CF cookies via FlareSolverr+proxy (for CF clearance generation)
-  const t3 = Date.now();
-  if (stickyProxy) {
-    try {
-      const cookies = await flareSolverrGetCookies('https://kisskh.co/', 55_000, stickyProxy);
-      const cfCookie = cookies?.find(c => c.name === 'cf_clearance');
-      result.cfCookiesWithProxy = {
-        cookieNames: cookies?.map(c => c.name) ?? [],
-        hasCfClearance: !!cfCookie,
-        cfPreview: cfCookie ? cfCookie.value.slice(0, 20) + '...' : null,
-        ms: Date.now() - t3,
-      };
-    } catch (err) {
-      result.cfCookiesWithProxy = { error: err.message, ms: Date.now() - t3 };
-    }
-  } else {
-    result.cfCookiesWithProxy = { skipped: 'PROXY_URL not set' };
+    result.kisskhEpisodeApi = { error: err.message, ms: Date.now() - t1 };
   }
 
   result.totalMs = Date.now() - t0;
