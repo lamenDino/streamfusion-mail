@@ -30,6 +30,13 @@ const log = createLogger('kisskh');
 const API_BASE = 'https://kisskh.do/api';
 const SITE_BASE = 'https://kisskh.do';
 
+// ─── Static API keys (embedded in kisskh.do JavaScript bundle) ───────────────
+// The .png endpoint bypasses Cloudflare WAF entirely (CF only protects the old
+// /api/DramaList/Episode/{id}?type= JSON endpoint, not the .png variant).
+// These keys are static across all browser sessions — update if streams stop.
+const EPISODE_KKEY = '9DC340B466AD8C79C6030B4737F21ED6DB2B807B8BCD60B199AFB8361B96427D6A7BF9627B32C627EBA47690D1EF03B6E6B8E8BD440FEEFB8AE14D140B2883A596198F61B79B68A51B79FBAB7B752CA4923B904FA01DC91287F075399A2930FBD6E047805CAFBD8F1B8B138E2FEF25A0DAA92D39C0C7A5308B40266FDFCDE169';
+const SUB_KKEY     = '7D756B33C55C75F98A242158EF0E6D04244378FE0F2FF71EF50505F2AA465E6F851717DE8BF10A5127A53A91C1211F6D3417DC3E3FF45C8F1FDDF218EFE3F5BEBCAE574B45A339A2DF7A3F0DBE04B4F9D3818D15AADC36A2789667686DF86F3C244C1F3C3AB2332B8CA03CDBE7C372498EE03AD820C8B903FF5A0D2698A2B945';
+
 const catalogCache = new TTLCache({ ttl: 10 * 60_000, maxSize: 200 });
 const metaCache    = new TTLCache({ ttl: 30 * 60_000, maxSize: 500 });
 const streamCache  = new TTLCache({ ttl: 2 * 60 * 60_000, maxSize: 1000 });
@@ -505,24 +512,68 @@ async function getStreams(stremioId, config = {}) {
 // ─── Direct API stream extraction (no browser) ────────────────────────────────
 
 /**
- * Attempts to get the KissKH stream URL directly via their API.
+ * Fetches stream URL from kisskh.do's new .png endpoint (bypasses CF WAF entirely).
+ *
+ * The .png URL format was discovered by intercepting real browser network calls.
+ * CF Bot Management only protects the old JSON endpoint (?type=), not the .png variant.
+ * The kkeys are static values embedded in the kisskh.do JavaScript bundle.
+ *
+ * Endpoint: GET /api/DramaList/Episode/{id}.png?err=false&ts=null&time=null&kkey={EPISODE_KKEY}
+ * Returns:  JSON { Video, Video_tmp, ThirdParty, Type, id, ... } with content-type image/png
+ *
+ * @returns {Promise<{streamUrl:string, subApiUrl:string}|null>}
+ */
+async function _fetchStreamViaPngApi(episodeId, proxyUrl) {
+  const url = `${API_BASE}/DramaList/Episode/${episodeId}.png?err=false&ts=null&time=null&kkey=${EPISODE_KKEY}`;
+  const proxyAgent = proxyUrl ? makeProxyAgent(proxyUrl) : getProxyAgent();
+  const proxyConfig = proxyAgent ? { httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false } : {};
+  try {
+    const { data } = await axios.get(url, {
+      headers: { ..._baseHeaders(), 'Accept': 'application/json, text/plain, */*' },
+      timeout: 8_000,
+      ...proxyConfig,
+    });
+    let json = data;
+    if (typeof data === 'string') {
+      try { json = JSON.parse(data); } catch { return null; }
+    }
+    if (!json || typeof json !== 'object') return null;
+    const videoUrl = json.Video || json.video;
+    if (!videoUrl || !videoUrl.startsWith('http')) return null;
+    log.info(`.png API stream found`, { episodeId, url: videoUrl.slice(0, 80) });
+    return { streamUrl: videoUrl, subApiUrl: `${API_BASE}/Sub/${episodeId}?kkey=${SUB_KKEY}` };
+  } catch (err) {
+    log.warn(`_fetchStreamViaPngApi failed: ${err.message}`, { episodeId });
+    return null;
+  }
+}
+
+/**
+ * Attempts to get the KissKH stream URL via the API.
  *
  * Priority:
+ *   0. .png endpoint with static kkey — no CF protection, fastest path
  *   1. FlareSolverr (FLARESOLVERR_URL) — real Chromium, bypasses CF Bot Management
  *   2. Direct axios + cf_clearance cookie (CF_CLEARANCE_KISSKH) — works only if IP
  *      region matches the cookie's origin; quick attempt, fails silently
  *
- * KissKH episode API:
+ * KissKH episode API (legacy, CF-protected):
  *   GET /api/DramaList/Episode/{id}?type=<1|2>&sub=0&source=<0|1>&quality=auto
  * Response JSON fields: Video, Sub, ThirdParty, ...
  *
  * @returns {Promise<{streamUrl:string, subApiUrl:string|null}|null>}
  */
 async function _fetchStreamViaApi(serieId, episodeId, proxyUrl) {
+  // ── 0. New .png endpoint (static kkey, no CF protection) ─────────────────
+  log.info('trying .png API endpoint (static kkey, no CF)', { episodeId });
+  const pngResult = await _fetchStreamViaPngApi(episodeId, proxyUrl);
+  if (pngResult) return pngResult;
+  log.warn('.png API returned no stream, falling back to legacy approaches', { episodeId });
+
   const _parseVideoData = (data) => {
     const videoUrl = data?.Video || data?.video || data?.url || data?.stream;
     if (videoUrl && typeof videoUrl === 'string' && videoUrl.startsWith('http')) {
-      return { streamUrl: videoUrl, subApiUrl: `${API_BASE}/Sub/${episodeId}` };
+      return { streamUrl: videoUrl, subApiUrl: `${API_BASE}/Sub/${episodeId}?kkey=${SUB_KKEY}` };
     }
     return null;
   };
@@ -812,7 +863,7 @@ async function _getSubtitlesFromApiUrl(subApiUrl, serieId, episodeId) {
     return [];
   }
 
-  const headers = await _headers();
+  const headers = _baseHeaders();
   let subtitleList;
   try {
     const resp = await axios.get(subApiUrl, { headers, timeout: 10_000, responseType: 'json' });
@@ -831,7 +882,7 @@ async function _getSubtitlesFromApiUrl(subApiUrl, serieId, episodeId) {
   });
 
   const decoded = [];
-  const H = await _headers();
+  const H = _baseHeaders();
   const STATIC_KEY = Buffer.from('AmSmZVcH93UQUezi');
   const STATIC_IV  = Buffer.from('ReBKWW8cqdjPEnF6');
 
