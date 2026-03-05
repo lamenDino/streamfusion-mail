@@ -234,11 +234,23 @@ app.get('/debug/flaresolverr', async (req, res) => {
 
       // Episode stream API
       const tE = Date.now();
-      const epBody = await sessionGet(`https://kisskh.co/api/DramaList/Episode/${testEpId}?type=2&sub=0&source=1&quality=auto`, sessionId);
+      // Use a fresh episode ID from a real series in the catalog if available
+      let realEpId = testEpId;
+      if (catData?.data?.length) {
+        const firstSeriesId = catData.data[0].id;
+        const detailBody = await sessionGet(`https://kisskh.co/api/DramaList/Drama/${firstSeriesId}?isq=false`, sessionId);
+        const detailData = parseBody(detailBody);
+        const firstEp = detailData?.episodes?.[0];
+        if (firstEp?.id) realEpId = String(firstEp.id);
+      }
+      const epBody = await sessionGet(`https://kisskh.co/api/DramaList/Episode/${realEpId}?type=2&sub=0&source=1&quality=auto`, sessionId);
       const epData = parseBody(epBody);
       result.kisskhEpisodeApi = {
+        testedEpId: realEpId,
         gotJSON: !!epData, hasVideo: !!(epData?.Video || epData?.video),
-        videoPreview: epData?.Video ? String(epData.Video).slice(0, 80) : null, ms: Date.now()-tE,
+        videoPreview: epData?.Video ? String(epData.Video).slice(0, 80) : null,
+        bodyPreview: epBody ? epBody.replace(/<[^>]+>/g, '').trim().slice(0, 200) : null,
+        ms: Date.now()-tE,
       };
     }
 
