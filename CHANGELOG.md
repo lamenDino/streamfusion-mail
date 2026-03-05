@@ -5,6 +5,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [1.4.7] — 2026-03-06
+
+### Fixed
+- **Cinemeta ID (`tt*`) con 0 risultati stream** — in alcuni ambienti Vercel, `v3-cinemeta.strem.io` risponde vuoto/timeout e il fallback TMDB non sempre era disponibile. Aggiunto fallback finale senza API key: risoluzione titolo da pagina pubblica IMDb (`https://www.imdb.com/title/{id}/`) con parsing `og:title`.
+- **Robustezza risoluzione titolo da IMDB ID** — il flusso ora è: `Cinemeta` → `TMDB /find` → `IMDb page fallback`. Se un provider fallisce, i successivi tentano automaticamente.
+
+### Changed
+- Aggiornati i commenti tipo provider in `src/providers/index.js` da `kdrama` a `series` per allineamento con il manifest corrente.
+
+---
+
 ## [1.4.6] — 2026-03-05
 
 ### Fixed

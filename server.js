@@ -592,7 +592,7 @@ Configura il proxy per sbloccare i contenuti da Vercel.</p>
   </p>
   <label for="tmdbKey">TMDB API Key (v3 auth)</label>
   <input id="tmdbKey" type="password" placeholder="Pre-configurata — puoi usare la tua chiave personale" autocomplete="off" spellcheck="false" value="${esc(f.tmdbKey)}"/>
-  <div class="hint">Una chiave di default è già attiva per tutti. Inserisci la tua chiave personale solo se vuoi usare il tuo account TMDB (<a href="https://www.themoviedb.org/settings/api" target="_blank">genera qui</a>).</div>
+  <div class="hint">TMDB è consigliato per metadati piu ricchi, ma non obbligatorio: per il match Cinemeta (tt*) esiste un fallback automatico via IMDb. Se vuoi usare il tuo account TMDB, inserisci la tua chiave personale (<a href="https://www.themoviedb.org/settings/api" target="_blank">genera qui</a>).</div>
 </div>
 
 <div class="card">

@@ -9,7 +9,7 @@
  *
  * ID prefixes:
  *   "kisskh_*"  → KissKH provider   (type: series)
- *   "rama_*"    → Rama provider     (type: kdrama)
+ *   "rama_*"    → Rama provider     (type: series)
  *   "tt*"       → Cinemeta IMDB ID  (search both providers by title)
  *
  * Catalog IDs:
@@ -36,7 +36,7 @@ const CINEMETA_TIMEOUT = 5_000;
 // ─── Catalog handler ─────────────────────────────────────────────────────────
 
 /**
- * @param {'series'|'kdrama'} type
+ * @param {'series'} type
  * @param {string} catalogId
  * @param {object} extra  { search?, skip? }
  * @param {object} [config]
@@ -69,7 +69,7 @@ async function handleCatalog(type, catalogId, extra = {}, config = {}) {
 // ─── Meta handler ─────────────────────────────────────────────────────────────
 
 /**
- * @param {'series'|'kdrama'} type
+ * @param {'series'} type
  * @param {string} id
  * @param {object} [config]
  * @returns {Promise<{meta: object|null}>}
@@ -98,7 +98,7 @@ async function handleMeta(type, id, config = {}) {
 // ─── Stream handler ───────────────────────────────────────────────────────────
 
 /**
- * @param {'series'|'kdrama'|'movie'} type
+ * @param {'series'|'movie'} type
  * @param {string} id   May be composite: "kisskh_123:456", "tt1234567:1:2"
  * @param {object} [config]
  * @returns {Promise<{streams: Array}>}
@@ -147,7 +147,7 @@ async function _fetchFromImdbId(rawId, type, config) {
 
   log.info('Cinemeta lookup', { imdbId, seasonNum, episodeNum, type });
 
-  // 1. Fetch title from Cinemeta (primary) or TMDB find-by-IMDB-ID (fallback).
+  // 1. Fetch title from Cinemeta (primary), then TMDB, then IMDb page fallback.
   //    v3-cinemeta.strem.io returns {} for Korean/Asian dramas when called from
   //    Vercel datacenter IPs — TMDB's /find endpoint covers all IMDB-indexed shows.
   let title = null;
@@ -162,12 +162,17 @@ async function _fetchFromImdbId(rawId, type, config) {
     log.warn(`Cinemeta meta fetch failed: ${err.message}`, { imdbId });
   }
 
-  // Fallback: TMDB find endpoint (config.tmdbKey comes pre-set from DEFAULT_CONFIG)
+  // Fallback #1: TMDB find endpoint (if a valid API key is configured)
   if (!title) {
     const tmdbKey = config.tmdbKey || process.env.TMDB_API_KEY || '';
     if (tmdbKey) {
       title = await findTitleByImdbId(imdbId, tmdbKey).catch(() => null);
     }
+  }
+
+  // Fallback #2: IMDb public page (no API key needed)
+  if (!title) {
+    title = await _findTitleFromImdbPage(imdbId).catch(() => null);
   }
 
   if (!title) {
@@ -291,6 +296,55 @@ function _matchEpisode(videos, seasonNum, episodeNum) {
   }
   // Fallback: just episode / sequential number (Korean dramas always season=1)
   return videos.find(v => epNum(v) === episodeNum) || null;
+}
+
+/**
+ * Resolve title directly from IMDb HTML as last fallback when APIs fail.
+ * Works without API keys and keeps Cinemeta tt* flow alive if TMDB is unavailable.
+ */
+async function _findTitleFromImdbPage(imdbId) {
+  if (!imdbId) return null;
+  try {
+    const url = `https://www.imdb.com/title/${imdbId}/`;
+    const { data: html } = await axios.get(url, {
+      timeout: 7_000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9,it-IT;q=0.8',
+      },
+    });
+
+    const og = html.match(/<meta\s+property=["']og:title["']\s+content=["']([^"']+)["']/i);
+    const rawTitle = og?.[1] || null;
+    const cleaned = _cleanImdbTitle(rawTitle);
+
+    if (cleaned) {
+      log.info(`IMDb fallback: ${imdbId} → "${cleaned}"`);
+      return cleaned;
+    }
+  } catch (err) {
+    log.warn(`IMDb fallback failed for ${imdbId}: ${err.message}`);
+  }
+  return null;
+}
+
+function _cleanImdbTitle(title) {
+  if (!title) return null;
+  let t = String(title)
+    .replace(/&quot;/g, '"')
+    .replace(/&#x27;|&#39;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\s*[-|]\s*IMDb\s*$/i, '')
+    .replace(/\s*\((TV\s+Series|TV\s+Mini\s+Series|TV\s+Episode|Video|Short)[^)]*\)\s*$/i, '')
+    .replace(/\s*\([^)]*\d{4}[^)]*\)\s*$/i, '');
+
+  // IMDb often appends rating/genres after a star marker.
+  if (t.includes('⭐')) t = t.split('⭐')[0];
+  if (t.includes('|')) t = t.split('|')[0];
+
+  return t.replace(/^\s*['"“”]+|['"“”]+\s*$/g, '').trim();
 }
 
 // ─── Native-prefix provider dispatch ─────────────────────────────────────────
