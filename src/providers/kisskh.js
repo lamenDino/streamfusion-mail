@@ -138,7 +138,8 @@ async function getCatalog(skip = 0, search = '', config = {}) {
 }
 
 async function _listCatalog(page, limit, proxyUrl) {
-  const url = `${API_BASE}/DramaList/List?page=${page}&type=1&sub=0&country=2&status=2&order=3&pageSize=${limit}`;
+  // status=0 → all (ongoing + completed); country=0 → all countries
+  const url = `${API_BASE}/DramaList/List?page=${page}&type=1&sub=0&country=0&status=0&order=3&pageSize=${limit}`;
   log.info('list catalog', { url });
   const data = await _apiGet(url, 8_000, proxyUrl);
   if (!data || !data.data) return [];
@@ -159,7 +160,7 @@ async function _searchCatalog(query, limit = 20, proxyUrl) {
     }
     const batchResults = await Promise.all(
       pages.map(async p => {
-        const url = `${API_BASE}/DramaList/List?page=${p}&type=1&sub=0&country=2&status=2&order=3&pageSize=30&search=${encodeURIComponent(query)}`;
+        const url = `${API_BASE}/DramaList/List?page=${p}&type=1&sub=0&country=0&status=0&order=3&pageSize=30&search=${encodeURIComponent(query)}`;
         try {
           const data = await _apiGet(url, 8_000, proxyUrl);
           if (!data || !data.data || !data.data.length) return [];
