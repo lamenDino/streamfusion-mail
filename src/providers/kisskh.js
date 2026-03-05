@@ -68,12 +68,22 @@ async function _headers() {
  */
 async function _apiGet(url, timeout = 8_000, proxyUrl) {
   // 1. FlareSolverr session approach: primer visit + API call from same IP
+  //    Hard 20 s cap — flareSolverrGetJSONWithPrimer can take up to ~110 s
+  //    (two sequential sessionGet calls × 55 s MAX_TIMEOUT each), which makes
+  //    Stremio time out before getMeta/catalog ever finishes.
   if (getFlareSolverrUrl()) {
     log.info('trying FlareSolverr session approach', { url: url.slice(0, 80) });
-    const fsResult = await flareSolverrGetJSONWithPrimer(url).catch(err => {
-      log.warn(`FlareSolverr session failed: ${err.message}`);
-      return null;
-    });
+    const FS_META_TIMEOUT = 20_000;
+    const fsResult = await Promise.race([
+      flareSolverrGetJSONWithPrimer(url).catch(err => {
+        log.warn(`FlareSolverr session failed: ${err.message}`);
+        return null;
+      }),
+      new Promise(r => setTimeout(() => {
+        log.warn('FlareSolverr meta/catalog: 20 s cap exceeded, falling back to direct axios');
+        r(null);
+      }, FS_META_TIMEOUT)),
+    ]);
     if (fsResult) {
       log.info('FlareSolverr session succeeded ✓');
       return fsResult;
