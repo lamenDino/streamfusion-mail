@@ -372,9 +372,11 @@ async function getMeta(id, config = {}) {
 
   try {
     // Fetch drama detail and cast in parallel
+    // skipFlare=true: DramaList/Drama and DramaList/Cast are plain JSON endpoints —
+    // not CF-protected from Vercel datacenter IPs, so Worker+FlareSolverr not needed.
     const [data, castData] = await Promise.all([
-      _apiGet(url, 8_000, config.proxyUrl, config.clientIp),
-      _apiGet(`${API_BASE}/DramaList/Cast/${serieId}`, 6_000, config.proxyUrl, config.clientIp).catch(() => null),
+      _apiGet(url, 8_000, config.proxyUrl, config.clientIp, true),
+      _apiGet(`${API_BASE}/DramaList/Cast/${serieId}`, 6_000, config.proxyUrl, config.clientIp, true).catch(() => null),
     ]);
     if (!data) return { meta: null };
 
@@ -536,27 +538,13 @@ async function _fetchStreamViaApi(serieId, episodeId, proxyUrl) {
     return null;
   };
 
-  // ── 0. CF Worker approach (fast, no session required) ─────────────────────
-  //   Proxies the episode API via a Cloudflare Worker. Since the Worker runs on
-  //   Cloudflare's own network, kisskh.co does not apply CF Bot Management to it.
-  if (getCfWorkerUrl()) {
-    const dramaReferer = `${SITE_BASE}/Drama/Any/Episode-Any?id=${serieId}&ep=${episodeId}`;
-    for (const [type, source] of [[2, 1], [1, 0], [2, 0], [1, 1]]) {
-      const epUrl = `${API_BASE}/DramaList/Episode/${episodeId}?type=${type}&sub=0&source=${source}&quality=auto`;
-      log.debug(`CF Worker stream type=${type} source=${source}`, { episodeId });
-      const data = await _cfWorkerGet(epUrl, 8_000, { xhr: '1', referer: dramaReferer });
-      const result = data ? _parseVideoData(data) : null;
-      if (result) {
-        log.info(`CF Worker stream found (type=${type},source=${source})`, { url: result.streamUrl.slice(0, 80) });
-        return result;
-      }
-    }
-    log.warn('CF Worker: no stream found, falling through to FlareSolverr/axios');
-  }
-
   // ── 1. FlareSolverr 3-step session approach (hard 25 s cap) ──────────────
   //   If FlareSolverr is configured, try it first with a strict timeout so we
   //   still have room for the direct-axios fallback within STREAM_TIMEOUT.
+  //
+  //   NOTE: CF Worker was tested here but kisskh.co CF Bot Management blocks
+  //   Cloudflare Worker IPs (all datacenter IPs, including CF-origin ones).
+  //   FlareSolverr (real Chromium browser) remains the reliable CF bypass.
   if (getFlareSolverrUrl()) {
     const FS_STREAM_TIMEOUT = 25_000; // ms hard cap for this block
     const fsResult = await Promise.race([
