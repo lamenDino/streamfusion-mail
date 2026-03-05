@@ -49,7 +49,7 @@ async function handleCatalog(type, catalogId, extra = {}, config = {}) {
   log.info('catalog request', { type, catalogId, skip, search });
 
   try {
-    if (catalogId === 'kisskh_catalog' || type === 'series') {
+    if (catalogId === 'kisskh_catalog') {
       const metas = await withTimeout(kisskh.getCatalog(skip, search, config), CATALOG_TIMEOUT, 'kisskh.getCatalog');
       return { metas };
     }

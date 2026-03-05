@@ -5,6 +5,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [1.4.6] — 2026-03-05
+
+### Fixed
+- **Metadati KissKH mai caricati (timeout TMDB)** — `enrichFromTmdb` poteva richiedere fino a 24s (2 ricerche × 8s + 1 detail × 8s). Sommato agli 8s delle chiamate KissKH, il getMeta superava il `META_TIMEOUT` di 30s, restituendo sempre `{meta: null}`. Fix: aggiunto un **cap di 10s** su `enrichFromTmdb` dentro getMeta (sia KissKH che Rama). Il metadato viene restituito con o senza l’arricchimento TMDB, sempre entro 18s.
+- **TMDB search fallisce su titoli con anno** — KissKH restituisce titoli come `"Therapy (2025)"`. La ricerca TMDB con questo titolo falliva perché TMDB ha solo `"Therapy"`. Fix: il suffisso anno-tra-parentesi viene rimosso prima della ricerca TMDB (`meta.name.replace(/\s*\(\d{4}\)\s*$/, '')`).
+- **Catalogo Rama non appare in Scopri (Discover)** — il tipo `kdrama` non è riconosciuto da Stremio, che mostra solo cataloghi di tipo `series`, `movie`, `channel`, `tv` nella scheda Scopri. Fix: tipo Rama cambiato da `kdrama` a `series` nel manifest. I routing interni continuano a funzionare correttamente tramite `id` prefix (`rama_*`).
+- **Routing catalogo pericoloso** — `handleCatalog` aveva un fallback `|| type === 'series'` che serviva il catalogo KissKH per qualsiasi richiesta di tipo `series`, inclusa `rama_catalog`. Fix: routing ora basato esclusivamente su `catalogId`.
+- **Manifest version bump** 1.4.4 → 1.4.6 — forza Stremio a ri-scaricare il manifest e aggiornare i tipi.
+
+---
+
 ## [1.4.5] — 2026-06-XX
 
 ### Fixed

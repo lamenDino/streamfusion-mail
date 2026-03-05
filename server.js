@@ -122,7 +122,7 @@ function buildManifest(config) {
   else if (providers === 'drammatica') catalogs = catalogs.filter(c => c.id.startsWith('drammatica'));
   else if (providers === 'guardaserie') catalogs = catalogs.filter(c => c.id.startsWith('guardaserie'));
 
-  const nativeTypes    = manifest.types      || ['series', 'kdrama'];
+  const nativeTypes    = manifest.types      || ['series'];
   const nativePrefixes = manifest.idPrefixes || ['kisskh_', 'rama_'];
 
   if (!cinemeta) {

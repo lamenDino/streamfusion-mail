@@ -421,7 +421,13 @@ async function getMeta(id, config = {}) {
     // ── TMDB enrichment (fills poster with HD artwork, cast, genres, imdb_id) ─
     if (config.tmdbKey) {
       const year = meta.releaseInfo || null;
-      const tmdb = await enrichFromTmdb(meta.name, year, config.tmdbKey).catch(() => null);
+      // Strip year suffix e.g. "Therapy (2025)" → "Therapy" for better TMDB matching
+      const tmdbTitle = meta.name.replace(/\s*\(\d{4}\)\s*$/, '').trim();
+      // Hard 10s cap so the total getMeta time stays well under META_TIMEOUT (30s)
+      const tmdb = await Promise.race([
+        enrichFromTmdb(tmdbTitle, year, config.tmdbKey).catch(() => null),
+        new Promise(r => setTimeout(() => r(null), 10_000)),
+      ]);
       if (tmdb) {
         if (tmdb.poster)                               meta.poster      = tmdb.poster;
         if (tmdb.background)                           meta.background  = tmdb.background;

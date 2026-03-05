@@ -262,7 +262,11 @@ async function getMeta(id, config = {}) {
 
   // ── TMDB enrichment (fills gaps: poster, background, cast, genres, rating) ─
   if (config.tmdbKey) {
-    const tmdb = await enrichFromTmdb(name, year, config.tmdbKey).catch(() => null);
+    // Hard 10s cap so the total getMeta time stays well under META_TIMEOUT (30s)
+    const tmdb = await Promise.race([
+      enrichFromTmdb(name, year, config.tmdbKey).catch(() => null),
+      new Promise(r => setTimeout(() => r(null), 10_000)),
+    ]);
     if (tmdb) {
       if (tmdb.poster)       meta.poster      = tmdb.poster;
       if (tmdb.background)   meta.background  = tmdb.background;
