@@ -208,9 +208,31 @@ async function _searchCatalog(query, limit = 20, proxyUrl, clientIp) {
   const allResults = [];
   const maxPages   = 20;  // cover ~600 most-recent Korean dramas
   const BATCH_SIZE = 3;   // fetch 3 pages in parallel per batch
+
+  // ─── Popularity sweep (order=1, pages 1–10) ───────────────────────────────
+  // Runs in parallel with the recency sweep to cover classic/popular dramas
+  // not present in the 600 most-recently-updated dramas (order=3).
+  // e.g. "Crash Landing on You" (page 3), "Goblin" (page 3), "Boys Over Flowers" (page 10).
+  const popularSweep = Promise.all(
+    Array.from({ length: 10 }, (_, i) => i + 1).map(async p => {
+      const url = `${API_BASE}/DramaList/List?page=${p}&type=1&sub=0&country=2&status=0&order=1&pageSize=30`;
+      try {
+        const data = await _apiGet(url, 8_000, proxyUrl, clientIp, true);
+        if (!data?.data?.length) return [];
+        return data.data
+          .map(_mapItem)
+          .filter(item => titleSimilarity(item.name, cleanQuery) > 0.3
+            || cleanTitleForSearch(item.name).includes(cleanQuery));
+      } catch (err) {
+        log.warn(`popular search page ${p} failed: ${err.message}`);
+        return [];
+      }
+    })
+  ).then(results => results.flat());
+
+  // ─── Recency sweep (order=3) ──────────────────────────────────────────────
   // No emptyBatches early-exit: since `search=` is ignored, every page returns
   // recent dramas that won't match until we reach the target drama's page.
-
   for (let batchStart = 1; allResults.length < limit && batchStart <= maxPages; batchStart += BATCH_SIZE) {
     const pages = [];
     for (let p = batchStart; p < batchStart + BATCH_SIZE && p <= maxPages; p++) {
@@ -239,6 +261,10 @@ async function _searchCatalog(query, limit = 20, proxyUrl, clientIp) {
     // Early-exit only when we have enough results
     if (allResults.length >= limit) break;
   }
+
+  // Merge popularity results (swept in parallel — no added latency)
+  const popularResults = await popularSweep;
+  allResults.push(...popularResults);
 
   // Deduplicate
   const seen = new Set();
