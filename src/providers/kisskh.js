@@ -639,6 +639,20 @@ async function _fetchStreamViaApi(serieId, episodeId, proxyUrl) {
     return null;
   };
 
+  // ── 0.5 Legacy episode API via CF Worker (fast fallback before FlareSolverr) ──
+  if (getCfWorkerUrl()) {
+    for (const [type, source] of [[2, 1], [1, 0], [2, 0], [1, 1]]) {
+      const url = `${API_BASE}/DramaList/Episode/${episodeId}?type=${type}&sub=0&source=${source}&quality=auto`;
+      const workerData = await _cfWorkerGet(url, 8_000);
+      const workerResult = _parseVideoData(workerData);
+      if (workerResult) {
+        log.info(`CF Worker stream found (type=${type},source=${source})`, { episodeId, url: workerResult.streamUrl.slice(0, 80) });
+        return workerResult;
+      }
+    }
+    log.warn('CF Worker episode API returned no stream URL', { episodeId });
+  }
+
   // Helper: parse FlareSolverr response body — Chrome wraps JSON in <pre> tags
   const _parseBody = (b) => {
     if (!b) return null;

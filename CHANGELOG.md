@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [1.4.9] — 2026-03-06
+
+### Fixed
+- **KissKH stream 0 in produzione anche con meta/catalog funzionanti** — aggiunto fallback della legacy episode API via **CF Worker** (`/DramaList/Episode/{id}?type=...`) prima di FlareSolverr/Puppeteer. In ambienti Vercel dove la chiamata diretta riceve challenge/403, il Worker edge puo restituire il JSON con `Video` senza avviare browser.
+- **Cinemeta ID con stream vuoti a cascata** — migliorato il percorso di risoluzione stream in modo che il fallimento `.png` non porti subito a timeout serverless; ora prova anche la legacy API via Worker in modo deterministico.
+
+---
+
 ## [1.4.8] — 2026-03-06
 
 ### Fixed
