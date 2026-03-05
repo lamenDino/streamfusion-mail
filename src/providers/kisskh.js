@@ -522,8 +522,18 @@ async function getStreams(stremioId, config = {}) {
       rawUrl     = apiResult.streamUrl;
       subtitles  = await _getSubtitlesFromApiUrl(apiResult.subApiUrl, serieId, episodeId);
     } else {
-      // 2. Fallback: browser extraction (intercepts m3u8 via Puppeteer)
-      log.info('direct API failed, falling back to browser extraction', { serieId, episodeId });
+      // 2. Fallback: parse episode HTML for embedded m3u8 URLs (fast, no browser)
+      log.info('direct API failed, trying HTML stream extraction fallback', { serieId, episodeId });
+      const htmlStream = await _fetchStreamFromEpisodeHtml(serieId, episodeId, config.proxyUrl);
+      if (htmlStream && htmlStream.startsWith('http')) {
+        rawUrl = htmlStream;
+        subtitles = await _getSubtitlesFromApiUrl(`${API_BASE}/Sub/${episodeId}?kkey=${SUB_KKEY}`, serieId, episodeId);
+      }
+    }
+
+    if (!rawUrl) {
+      // 3. Fallback: browser extraction (intercepts m3u8 via Puppeteer)
+      log.info('html fallback failed, falling back to browser extraction', { serieId, episodeId });
       const BROWSER_STREAM_TIMEOUT = 20_000;
       const browserResult = await withTimeout(
         _extractStreamAndSubs(serieId, episodeId),
@@ -539,7 +549,7 @@ async function getStreams(stremioId, config = {}) {
         log.warn('no stream found via browser', { serieId, episodeId });
         return [];
       }
-      subtitles = await _getSubtitlesFromApiUrl(subApiUrl, serieId, episodeId);
+      subtitles = await _getSubtitlesFromApiUrl(subApiUrl || `${API_BASE}/Sub/${episodeId}?kkey=${SUB_KKEY}`, serieId, episodeId);
     }
 
     if (!rawUrl) {
@@ -578,6 +588,51 @@ async function getStreams(stremioId, config = {}) {
       },
     },
   ];
+}
+
+async function _fetchStreamFromEpisodeHtml(serieId, episodeId, proxyUrl) {
+  const episodeUrl = `${SITE_BASE}/Drama/Any/Episode-Any?id=${serieId}&ep=${episodeId}`;
+  const proxyAgent = proxyUrl ? makeProxyAgent(proxyUrl) : getProxyAgent();
+  const proxyConfig = proxyAgent ? { httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false } : {};
+
+  try {
+    const { data } = await axios.get(episodeUrl, {
+      headers: {
+        ..._baseHeaders(),
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+      timeout: 10_000,
+      ...proxyConfig,
+    });
+
+    const html = String(data || '');
+    if (!html) return null;
+
+    // Try plain m3u8 URLs first.
+    const direct = html.match(/https?:\/\/[^"'\s<>]+\.m3u8(?:\?[^"'\s<>]*)?/i);
+    if (direct && direct[0]) {
+      log.info('html fallback found direct m3u8', { episodeId, url: direct[0].slice(0, 80) });
+      return direct[0];
+    }
+
+    // Try escaped JSON form (https:\/\/...m3u8...)
+    const escaped = html.match(/https?:\\\/\\\/[^"'\s<>]+\.m3u8(?:\\u0026[^"'\s<>]*)?/i);
+    if (escaped && escaped[0]) {
+      const normalized = escaped[0]
+        .replace(/\\\//g, '/')
+        .replace(/\\u0026/g, '&');
+      if (normalized.startsWith('http')) {
+        log.info('html fallback found escaped m3u8', { episodeId, url: normalized.slice(0, 80) });
+        return normalized;
+      }
+    }
+
+    log.warn('html fallback found no m3u8 URL', { episodeId });
+    return null;
+  } catch (err) {
+    log.warn(`html fallback request failed: ${err.message}`, { episodeId });
+    return null;
+  }
 }
 
 // ─── Direct API stream extraction (no browser) ────────────────────────────────

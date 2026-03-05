@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [1.5.2] — 2026-03-06
+
+### Added
+- **KissKH HTML stream fallback** — quando `.png`/legacy API falliscono, il provider prova a leggere la pagina episodio (`/Drama/Any/Episode-Any`) e a estrarre direttamente URL `.m3u8` dal markup (formato normale o escaped JSON). Questo percorso usa `PROXY_URL` come gli altri endpoint e riduce la dipendenza da FlareSolverr/Puppeteer su Vercel.
+
+### Changed
+- Fallback order stream KissKH: `API (.png + legacy)` → `HTML extraction` → `browser extraction`.
+
+---
+
 ## [1.5.1] — 2026-03-06
 
 ### Added
