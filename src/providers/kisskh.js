@@ -211,28 +211,51 @@ function _mapItem(item) {
 /**
  * Enrich basic catalog items with KissKH drama detail data in parallel.
  * Populates metaCache as a side effect so getMeta is served from cache.
+ *
+ * Uses direct axios (no FlareSolverr) because the drama detail API is not
+ * CF-protected. FlareSolverr would add a 15s dead wait for each item.
+ * A 7s hard cap ensures the catalog always returns within the response budget;
+ * if enrichment times out the basic _mapItem() objects are returned instead.
+ *
  * @param {Array} items  basic _mapItem() objects
  * @returns {Promise<Array>}
  */
 async function _enrichCatalogItems(items, proxyUrl, clientIp) {
-  const enriched = await Promise.all(items.map(async (item) => {
-    // If already in metaCache, use that
+  const proxyAgent = proxyUrl ? makeProxyAgent(proxyUrl) : getProxyAgent();
+  const proxyConfig = proxyAgent ? { httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false } : {};
+
+  const enrichPromise = Promise.all(items.map(async (item) => {
+    // If already in metaCache, use that — no network call needed
     const cached = metaCache.get(item.id);
     if (cached) {
       return _metaToCatalogItem(cached);
     }
-    // Fetch drama detail from KissKH (NOT CF-protected, fast)
+    // Direct axios — bypass FlareSolverr (drama detail API is not CF-protected)
     const serieId = item.id.replace(/^kisskh_/, '');
-    const data = await _apiGet(
-      `${API_BASE}/DramaList/Drama/${serieId}?isq=false`,
-      6_000, proxyUrl, clientIp
-    ).catch(() => null);
-    if (!data) return item; // fallback to basic item
-    const meta = _buildMeta(item.id, serieId, data, null);
-    metaCache.set(item.id, meta);
-    return _metaToCatalogItem(meta);
+    try {
+      const { data } = await axios.get(
+        `${API_BASE}/DramaList/Drama/${serieId}?isq=false`,
+        { headers: _baseHeaders(clientIp), timeout: 6_000, ...proxyConfig }
+      );
+      if (!data) return item;
+      const meta = _buildMeta(item.id, serieId, data, null);
+      metaCache.set(item.id, meta);
+      return _metaToCatalogItem(meta);
+    } catch {
+      return item; // fallback to basic item on any error
+    }
   }));
-  return enriched;
+
+  // 7s hard cap: if enrichment is still running, return basic items so Stremio
+  // always gets a response before its home-page timeout fires
+  const timeout = new Promise(resolve =>
+    setTimeout(() => {
+      log.warn('_enrichCatalogItems: 7s cap exceeded, returning basic items');
+      resolve(items);
+    }, 7_000)
+  );
+
+  return Promise.race([enrichPromise, timeout]);
 }
 
 /** Build the standard meta object from KissKH drama detail response */
