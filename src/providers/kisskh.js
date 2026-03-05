@@ -546,7 +546,7 @@ async function _fetchStreamViaApi(serieId, episodeId, proxyUrl) {
   //   Cloudflare Worker IPs (all datacenter IPs, including CF-origin ones).
   //   FlareSolverr (real Chromium browser) remains the reliable CF bypass.
   if (getFlareSolverrUrl()) {
-    const FS_STREAM_TIMEOUT = 25_000; // ms hard cap for this block
+    const FS_STREAM_TIMEOUT = 15_000; // ms hard cap — reduced to leave more time for Puppeteer fallback
     const fsResult = await Promise.race([
       (async () => {
         const sessionId = await createSession().catch(() => null);
@@ -702,12 +702,9 @@ async function _extractStreamAndSubs(serieId, episodeId) {
       } catch (_) { /* ignore parse errors */ }
     }
 
-    // Inject CF clearance cookie
-    const cfCookieStr = await getCloudflareCookie().catch(() => '');
-    if (cfCookieStr) {
-      const cfVal = cfCookieStr.replace(/^cf_clearance=/, '');
-      await page.setCookie({ name: 'cf_clearance', value: cfVal, domain: 'kisskh.do', path: '/', httpOnly: true, secure: true, sameSite: 'Lax' });
-    }
+    // NOTE: Do NOT inject CF_CLEARANCE_KISSKH here — it may be stale or for a different
+    // domain (kisskh.co vs kisskh.do). Injecting a wrong cookie prevents the browser from
+    // solving the CF challenge fresh. Let Browserless.io handle CF naturally.
 
     // Block heavy resources; intercept m3u8 + sub API
     await page.setRequestInterception(true);
@@ -745,13 +742,34 @@ async function _extractStreamAndSubs(serieId, episodeId) {
       log.warn(`page.goto warning: ${e.message.slice(0, 80)}`);
     });
 
-    // Log actual URL + title to verify we're on the right page (not a CF challenge)
+    // Log actual URL + title; if CF challenge is detected, wait for auto-resolution
     try {
       const finalUrl = page.url();
       const title = await page.title().catch(() => '');
       log.info('page loaded', { finalUrl: finalUrl.slice(0, 100), title: title.slice(0, 60) });
-      if (title.toLowerCase().includes('just a moment')) {
-        log.warn('CF challenge detected — waiting for auto-resolution...');
+      const isCfChallenge = (t) => t.toLowerCase().includes('just a moment') || t.toLowerCase().includes('checking your browser');
+      if (isCfChallenge(title)) {
+        log.warn('CF challenge detected — waiting up to 18s for auto-resolution...');
+        const cfDeadline = Date.now() + 18_000;
+        while (Date.now() < cfDeadline) {
+          await _sleep(1_500);
+          const t2 = await page.title().catch(() => '');
+          if (!isCfChallenge(t2)) {
+            log.info('CF challenge resolved, title now:', { title: t2.slice(0, 60) });
+            break;
+          }
+        }
+      }
+    } catch (_) {}
+
+    // After potential CF resolution, extract the fresh cf_clearance and cache it so the
+    // API fallback path on future warm requests benefits from a valid kisskh.do cookie.
+    try {
+      const pageCookies = await page.cookies();
+      const freshCf = pageCookies.find(c => c.name === 'cf_clearance');
+      if (freshCf && freshCf.value) {
+        log.info(`browser obtained fresh cf_clearance: ${freshCf.value.slice(0, 12)}...`);
+        process.env.CF_CLEARANCE_KISSKH = freshCf.value;
       }
     } catch (_) {}
 
