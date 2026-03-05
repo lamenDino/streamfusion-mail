@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [1.5.4] — 2026-03-06
+
+### Changed
+- **Ordine fallback stream KissKH ottimizzato per Vercel** — il fallback HLS predittivo ora viene applicato **prima** del browser fallback. In questo modo, quando i path API/HTML falliscono, la risposta non resta bloccata in timeout Puppeteer (`504`) e restituisce comunque uno stream candidato invece di `streams: []`.
+
+---
+
 ## [1.5.3] — 2026-03-06
 
 ### Added

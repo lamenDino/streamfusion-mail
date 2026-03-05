@@ -533,8 +533,17 @@ async function getStreams(stremioId, config = {}) {
     }
 
     if (!rawUrl) {
+      const predicted = _predictHlsUrl(serieId, episodeNumHint);
+      if (predicted) {
+        rawUrl = predicted;
+        subtitles = await _getSubtitlesFromApiUrl(`${API_BASE}/Sub/${episodeId}?kkey=${SUB_KKEY}`, serieId, episodeId);
+        log.warn('using heuristic predicted HLS URL fallback', { serieId, episodeId, episodeNumHint, url: predicted.slice(0, 90) });
+      }
+    }
+
+    if (!rawUrl) {
       // 3. Fallback: browser extraction (intercepts m3u8 via Puppeteer)
-      log.info('html fallback failed, falling back to browser extraction', { serieId, episodeId });
+      log.info('heuristic fallback unavailable, trying browser extraction', { serieId, episodeId });
       const BROWSER_STREAM_TIMEOUT = 20_000;
       const browserResult = await withTimeout(
         _extractStreamAndSubs(serieId, episodeId),
@@ -554,15 +563,8 @@ async function getStreams(stremioId, config = {}) {
     }
 
     if (!rawUrl) {
-      const predicted = _predictHlsUrl(serieId, episodeNumHint);
-      if (predicted) {
-        rawUrl = predicted;
-        subtitles = await _getSubtitlesFromApiUrl(`${API_BASE}/Sub/${episodeId}?kkey=${SUB_KKEY}`, serieId, episodeId);
-        log.warn('using heuristic predicted HLS URL fallback', { serieId, episodeId, episodeNumHint, url: predicted.slice(0, 90) });
-      } else {
-        log.warn('no stream found', { serieId, episodeId });
-        return [];
-      }
+      log.warn('no stream found', { serieId, episodeId });
+      return [];
     }
     streamCache.set(cacheKey, { url: rawUrl, subtitles });
   }
