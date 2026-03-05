@@ -1,6 +1,6 @@
 ﻿# StreamFusion Mail
 
-![Version](https://img.shields.io/badge/version-1.3.5-blue?style=flat-square)
+![Version](https://img.shields.io/badge/version-1.4.5-blue?style=flat-square)
 ![Node](https://img.shields.io/badge/node-%3E%3D18-green?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square)
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fvitouchiha%2Fstreamfusion-mail)
@@ -19,7 +19,7 @@
 
 | Provider | Sito | Tipo | Sub | Tecnica |
 |----------|------|------|-----|---------|
-| **KissKH** | `kisskh.co` | Asian Drama | ITA | Axios REST API + FlareSolverr + direct axios fallback |
+| **KissKH** | `kisskh.do` | Asian Drama | ITA | `.png` API con kkey statico (no CF) + Puppeteer fallback |
 | **Rama** | `ramaorientalfansub.live` | Korean Drama | ITA | cloudscraper + cheerio + iframe/MP4 |
 
 ---
@@ -33,7 +33,7 @@ StreamFusion Mail
 ├── src/
 │   ├── providers/
 │   │   ├── index.js           ← Aggregatore: routing, timeout, deduplication, IMDB lookup
-│   │   ├── kisskh.js          ← Provider KissKH (API + FlareSolverr + direct axios fallback)
+│   │   ├── kisskh.js          ← Provider KissKH (.png API kkey statico + Puppeteer fallback)
 │   │   └── rama.js            ← Provider Rama Oriental Fansub
 │   └── utils/
 │       ├── logger.js          ← Logger strutturato (JSON prod / human dev)
@@ -64,9 +64,10 @@ Stremio Client
   server.js (Express) — timeout 50s guard
       │
       ├─ type=series  / id=kisskh_*   ──► kisskh.js
-      │                                     └─ 1. FlareSolverr (max 25s) → episodio API
-      │                                     └─ 2. axios diretto via proxy (fallback)
-      │                                     └─ 3. CF clearance cookie (fallback)
+      │                                     └─ 0. .png API con kkey statico (~1s, no CF)
+      │                                     └─ 1. FlareSolverr fallback (max 15s)
+      │                                     └─ 2. axios diretto (fallback)
+      │                                     └─ 3. Puppeteer browser (last resort)
       │                                     └─ subtitle decrypt (AES-128-CBC)
       │
       ├─ type=kdrama  / id=rama_*     ──► rama.js

@@ -162,7 +162,7 @@ async function _fetchFromImdbId(rawId, type, config) {
     log.warn(`Cinemeta meta fetch failed: ${err.message}`, { imdbId });
   }
 
-  // Fallback: TMDB find endpoint (requires tmdbKey in config or TMDB_API_KEY env)
+  // Fallback: TMDB find endpoint (config.tmdbKey comes pre-set from DEFAULT_CONFIG)
   if (!title) {
     const tmdbKey = config.tmdbKey || process.env.TMDB_API_KEY || '';
     if (tmdbKey) {

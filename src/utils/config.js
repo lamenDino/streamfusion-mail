@@ -32,7 +32,9 @@ const DEFAULT_CONFIG = {
   hideCatalogs: false,
   providers:    'all',
   cinemeta:     false,
-  tmdbKey:        '',
+  // Default TMDB key — active for all users unless they supply their own.
+  // Provides poster HD, cast, genres, IMDB title lookup for Cinemeta streams.
+  tmdbKey:        '6e0a84ca7b324763793422a6656d34ff',
   rpdbKey:        '',
   topPosterKey:   '',
 };
@@ -111,7 +113,7 @@ function decodeConfig(encoded) {
       hideCatalogs: !!obj.hc,
       providers:    pvMap[obj.pv] || 'all',
       cinemeta:     !!obj.cm,
-      tmdbKey:        (obj.tm   || '').trim(),
+      tmdbKey:        (obj.tm   || DEFAULT_CONFIG.tmdbKey).trim(),
       rpdbKey:        (obj.rp   || '').trim(),
       topPosterKey:   (obj.tp   || '').trim(),
     };
@@ -127,7 +129,7 @@ function decodeConfig(encoded) {
         hideCatalogs: !!obj.hc,
         providers:    pvMap[obj.pv] || 'all',
         cinemeta:     !!obj.cm,
-        tmdbKey:        (obj.tm   || '').trim(),
+        tmdbKey:        (obj.tm   || DEFAULT_CONFIG.tmdbKey).trim(),
         rpdbKey:        (obj.rp   || '').trim(),
         topPosterKey:   (obj.tp   || '').trim(),
       };

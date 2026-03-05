@@ -591,8 +591,8 @@ Configura il proxy per sbloccare i contenuti da Vercel.</p>
     <a href="https://www.themoviedb.org/settings/api" target="_blank" style="color:var(--accent-light)">genera la tua API key</a>.
   </p>
   <label for="tmdbKey">TMDB API Key (v3 auth)</label>
-  <input id="tmdbKey" type="password" placeholder="Incolla qui la tua TMDB v3 API key" autocomplete="off" spellcheck="false" value="${esc(f.tmdbKey)}"/>
-  <div class="hint">Lascia vuoto per disattivare. Con la chiave attiva, poster e schede dei drama avranno immagini HD e dati completi.</div>
+  <input id="tmdbKey" type="password" placeholder="Pre-configurata — puoi usare la tua chiave personale" autocomplete="off" spellcheck="false" value="${esc(f.tmdbKey)}"/>
+  <div class="hint">Una chiave di default è già attiva per tutti. Inserisci la tua chiave personale solo se vuoi usare il tuo account TMDB (<a href="https://www.themoviedb.org/settings/api" target="_blank">genera qui</a>).</div>
 </div>
 
 <div class="card">
