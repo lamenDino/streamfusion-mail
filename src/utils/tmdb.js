@@ -207,4 +207,34 @@ function _bestMatch(query, results) {
   return results.reduce((best, r) => (!best || r.popularity > best.popularity) ? r : best, null);
 }
 
-module.exports = { enrichFromTmdb, rpdbPosterUrl, topPosterUrl };
+/**
+ * Look up a TV/movie title by IMDB ID via TMDB's /find endpoint.
+ * Used as fallback when Cinemeta returns empty for Korean/Asian dramas.
+ *
+ * @param {string} imdbId   e.g. "tt1234567"
+ * @param {string} apiKey   TMDB v3 API key
+ * @returns {Promise<string|null>}  English title, or null if not found
+ */
+async function findTitleByImdbId(imdbId, apiKey) {
+  if (!apiKey || !imdbId) return null;
+
+  const cacheKey = `tmdb:find:${imdbId}`;
+  const cached = cache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
+  try {
+    const params = new URLSearchParams({ api_key: apiKey, external_source: 'imdb_id' });
+    const { data } = await axios.get(`${TMDB_BASE}/find/${imdbId}?${params}`, { timeout: 6_000 });
+    // tv_results first, then movie_results
+    const result = (data.tv_results || [])[0] || (data.movie_results || [])[0] || null;
+    const title  = result ? (result.name || result.original_name || result.title || result.original_title || null) : null;
+    cache.set(cacheKey, title);  // also cache null to avoid repeated failed lookups
+    if (title) log.info(`TMDB find: ${imdbId} → "${title}"`);
+    return title;
+  } catch (err) {
+    log.warn(`TMDB find failed for ${imdbId}: ${err.message}`);
+    return null;
+  }
+}
+
+module.exports = { enrichFromTmdb, rpdbPosterUrl, topPosterUrl, findTitleByImdbId };

@@ -22,6 +22,7 @@ const kisskh        = require('./kisskh');
 const rama          = require('./rama');
 const { withTimeout } = require('../utils/fetcher');
 const { titleSimilarity } = require('../utils/titleHelper');
+const { findTitleByImdbId } = require('../utils/tmdb');
 const { createLogger } = require('../utils/logger');
 
 const log = createLogger('aggregator');
@@ -146,7 +147,9 @@ async function _fetchFromImdbId(rawId, type, config) {
 
   log.info('Cinemeta lookup', { imdbId, seasonNum, episodeNum, type });
 
-  // 1. Fetch title from Cinemeta
+  // 1. Fetch title from Cinemeta (primary) or TMDB find-by-IMDB-ID (fallback).
+  //    v3-cinemeta.strem.io returns {} for Korean/Asian dramas when called from
+  //    Vercel datacenter IPs — TMDB's /find endpoint covers all IMDB-indexed shows.
   let title = null;
   try {
     const metaType = type === 'movie' ? 'movie' : 'series';
@@ -154,16 +157,24 @@ async function _fetchFromImdbId(rawId, type, config) {
       `https://v3-cinemeta.strem.io/meta/${metaType}/${imdbId}.json`,
       { timeout: CINEMETA_TIMEOUT }
     );
-    title = resp.data?.meta?.name;
+    title = resp.data?.meta?.name || null;
   } catch (err) {
     log.warn(`Cinemeta meta fetch failed: ${err.message}`, { imdbId });
-    return [];
   }
+
+  // Fallback: TMDB find endpoint (requires tmdbKey in config or TMDB_API_KEY env)
   if (!title) {
-    log.warn('no title from Cinemeta', { imdbId });
+    const tmdbKey = config.tmdbKey || process.env.TMDB_API_KEY || '';
+    if (tmdbKey) {
+      title = await findTitleByImdbId(imdbId, tmdbKey).catch(() => null);
+    }
+  }
+
+  if (!title) {
+    log.warn('no title from Cinemeta or TMDB', { imdbId });
     return [];
   }
-  log.info(`Cinemeta title: "${title}"`, { imdbId });
+  log.info(`title resolved: "${title}"`, { imdbId });
 
   // 2. Search providers for the title, respecting `config.providers`
   const useKisskh     = !config.providers || config.providers === 'all' || config.providers === 'kisskh';
