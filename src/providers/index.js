@@ -198,8 +198,13 @@ async function _fetchFromImdbId(rawId, type, config) {
  */
 async function _kisskhStreamsForTitle(title, seasonNum, episodeNum, config) {
   const SEARCH_TIMEOUT = 20_000; // KissKH API ignores `search=` param — must paginate up to 20 pages
+  log.info('kisskh title search start', { title, seasonNum, episodeNum });
   const results = await withTimeout(kisskh.getCatalog(0, title, config), SEARCH_TIMEOUT, 'kisskh.search').catch(() => []);
-  if (!results || !results.length) return [];
+  log.info('kisskh title search done', { title, count: results?.length || 0 });
+  if (!results || !results.length) {
+    log.warn('kisskh title search returned 0 results', { title });
+    return [];
+  }
 
   // Pick best title match
   const best = _bestMatch(results, title);
@@ -208,7 +213,12 @@ async function _kisskhStreamsForTitle(title, seasonNum, episodeNum, config) {
 
   // Get episode list
   const { meta } = await withTimeout(kisskh.getMeta(best.id, config), META_TIMEOUT, 'kisskh.getMeta').catch(() => ({ meta: null }));
-  if (!meta || !meta.videos || !meta.videos.length) return [];
+  const videoCount = meta?.videos?.length || 0;
+  log.info('kisskh meta fetched for best match', { bestId: best.id, videoCount });
+  if (!meta || !meta.videos || !meta.videos.length) {
+    log.warn('kisskh meta has no videos', { bestId: best.id, title: best.name });
+    return [];
+  }
 
   // Find matching episode
   const ep = _matchEpisode(meta.videos, seasonNum, episodeNum);
@@ -217,7 +227,10 @@ async function _kisskhStreamsForTitle(title, seasonNum, episodeNum, config) {
     return [];
   }
 
-  return withTimeout(kisskh.getStreams(ep.id, config), STREAM_TIMEOUT, 'kisskh.getStreams').catch(() => []);
+  log.info('kisskh episode match found', { bestId: best.id, episodeId: ep.id, seasonNum, episodeNum });
+  const streams = await withTimeout(kisskh.getStreams(ep.id, config), STREAM_TIMEOUT, 'kisskh.getStreams').catch(() => []);
+  log.info('kisskh streams fetched', { episodeId: ep.id, count: streams?.length || 0 });
+  return streams;
 }
 
 /**

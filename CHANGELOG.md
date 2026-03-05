@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [1.5.1] — 2026-03-06
+
+### Added
+- **Diagnostica produzione Cinemeta → KissKH** — aggiunti log dettagliati nel percorso `tt*`: inizio/fine ricerca titolo, count risultati, meta video count, episode match e stream count finale. Serve a isolare con precisione il punto di fallimento su Vercel senza test locali.
+
+---
+
 ## [1.5.0] — 2026-03-06
 
 ### Fixed
