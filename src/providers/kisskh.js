@@ -266,9 +266,12 @@ async function _searchCatalog(query, limit = 20, proxyUrl, clientIp) {
   const popularResults = await popularSweep;
   allResults.push(...popularResults);
 
-  // Deduplicate
+  // Deduplicate, then sort by descending similarity so exact matches bubble up
+  // before partial matches (e.g. "Crash Landing on You" > "Crash" for that query)
   const seen = new Set();
-  const unique = allResults.filter(i => { if (seen.has(i.id)) return false; seen.add(i.id); return true; }).slice(0, limit);
+  const allUnique = allResults.filter(i => { if (seen.has(i.id)) return false; seen.add(i.id); return true; });
+  allUnique.sort((a, b) => titleSimilarity(b.name, query) - titleSimilarity(a.name, query));
+  const unique = allUnique.slice(0, limit);
   // Enrich found items with KissKH detail
   return _enrichCatalogItems(unique, proxyUrl, clientIp);
 }
