@@ -98,6 +98,8 @@ function buildManifest(config) {
   let catalogs = manifest.catalogs || [];
   if (providers === 'kisskh') catalogs = catalogs.filter(c => c.id.startsWith('kisskh'));
   else if (providers === 'rama') catalogs = catalogs.filter(c => c.id.startsWith('rama'));
+  else if (providers === 'drammatica') catalogs = catalogs.filter(c => c.id.startsWith('drammatica'));
+  else if (providers === 'guardaserie') catalogs = catalogs.filter(c => c.id.startsWith('guardaserie'));
 
   // Extra types / prefixes for Cinemeta support
   const extraTypes    = cinemeta ? ['movie'] : [];
@@ -523,6 +525,8 @@ Configura il proxy per sbloccare i contenuti da Vercel.</p>
     <label class="ropt"><input type="radio" name="pv" value="all" ${(!f.providers || f.providers === 'all') ? 'checked' : ''}/> 🌐 Tutti</label>
     <label class="ropt"><input type="radio" name="pv" value="kisskh" ${f.providers === 'kisskh' ? 'checked' : ''}/> <b>KissKH</b></label>
     <label class="ropt"><input type="radio" name="pv" value="rama" ${f.providers === 'rama' ? 'checked' : ''}/> <b>Rama</b></label>
+    <label class="ropt"><input type="radio" name="pv" value="drammatica" ${f.providers === 'drammatica' ? 'checked' : ''}/> <b>Drammatica</b></label>
+    <label class="ropt"><input type="radio" name="pv" value="guardaserie" ${f.providers === 'guardaserie' ? 'checked' : ''}/> <b>Guardaserie</b></label>
   </div>
   <div class="hint">Scegli da quale sorgente vuoi i flussi streaming.</div>
 
