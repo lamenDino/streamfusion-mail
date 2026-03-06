@@ -658,21 +658,31 @@ async function getStreams(stremioId, config = {}) {
       rawUrl    = extractedUrl;
       if (!rawUrl) {
         log.warn('no stream found via browser', { serieId, episodeId });
-        return [];
+        return [{
+          name: '[DEBUG]\nKissKH Browser',
+          title: `Browser timed out or blocked by Cloudflare Turnstile.\nSerie: ${serieId} / Ep: ${episodeId}`,
+          url: 'http://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8'
+        }];
       }
       subtitles = await _getSubtitlesFromApiUrl(subApiUrl || `${API_BASE}/Sub/${episodeId}?kkey=${SUB_KKEY}`, serieId, episodeId);
     }
 
     if (!rawUrl) {
       log.warn('no stream found', { serieId, episodeId });
-      return [];
-    }
-
+        return [{
+          name: '[DEBUG]\nKissKH',
+          title: `Stream blocked by Cloudflare.\nSerie: ${serieId} / Ep: ${episodeId}`,
+          url: 'http://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8'
+        }];
     // Last guard: avoid returning dead links that show in Stremio but fail to start.
     const playable = await _isLikelyPlayableHls(rawUrl, config.proxyUrl);
     if (!playable) {
       log.warn('final stream URL probe failed, returning no streams', { serieId, episodeId, url: rawUrl.slice(0, 100) });
-      return [];
+      return [{
+          name: '[DEBUG]\nKissKH Blocked',
+          title: `Stream link extracted but probe failed (403 Forbidden). Cloudflare restriction likely.\nUrl: ${rawUrl.slice(0, 50)}...`,
+          url: 'http://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8'
+      }];
     }
     streamCache.set(cacheKey, { url: rawUrl, subtitles });
   }
