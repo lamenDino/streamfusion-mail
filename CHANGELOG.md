@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [1.6.9] — 2026-03-06
+
+### Fixed
+- **Safety-net globale meta KissKH** — l'aggregatore ora garantisce fallback `meta` valido per ogni ID `kisskh_*` anche in caso di timeout/eccezioni provider, evitando definitivamente il rendering bloccante *"No metadata was found"* nella sezione Scopri.
+- **Diagnostica produzione migliorata** — aggiunto log `meta response` con `provider`, `hasMeta` e `videos` per verificare in tempo reale cosa viene realmente restituito a Stremio su ogni richiesta dettaglio.
+
+---
+
 ## [1.6.8] — 2026-03-06
 
 ### Fixed

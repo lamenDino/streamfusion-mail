@@ -33,6 +33,17 @@ const META_TIMEOUT     = Number(process.env.META_TIMEOUT)     || 30_000;
 const STREAM_TIMEOUT   = Number(process.env.STREAM_TIMEOUT)   || 45_000;
 const CINEMETA_TIMEOUT = 5_000;
 
+function _fallbackMetaForId(id, type = 'series') {
+  const clean = String(id || '').replace(/^(kisskh_|rama_)/, '').replace(/[-_]+/g, ' ').trim();
+  return {
+    id,
+    type,
+    name: clean ? clean.replace(/\b\w/g, c => c.toUpperCase()) : id,
+    description: 'Metadata temporaneamente non disponibile. Riprova tra pochi secondi.',
+    videos: [],
+  };
+}
+
 // ─── Catalog handler ─────────────────────────────────────────────────────────
 
 /**
@@ -78,18 +89,30 @@ async function handleMeta(type, id, config = {}) {
   log.info('meta request', { type, id });
 
   try {
+    let result = { meta: null };
+
     if (id.startsWith('kisskh_')) {
-      const result = await withTimeout(kisskh.getMeta(id, config), META_TIMEOUT, 'kisskh.getMeta');
-      return result || { meta: null };
+      result = await withTimeout(kisskh.getMeta(id, config), META_TIMEOUT, 'kisskh.getMeta');
+      if (!result?.meta) result = { meta: _fallbackMetaForId(id, 'series') };
+      const videos = Array.isArray(result.meta?.videos) ? result.meta.videos.length : 0;
+      log.info('meta response', { id, provider: 'kisskh', hasMeta: !!result.meta, videos });
+      return result;
     }
 
     if (id.startsWith('rama_')) {
-      const result = await withTimeout(rama.getMeta(id, config), META_TIMEOUT, 'rama.getMeta');
+      result = await withTimeout(rama.getMeta(id, config), META_TIMEOUT, 'rama.getMeta');
+      const videos = Array.isArray(result?.meta?.videos) ? result.meta.videos.length : 0;
+      log.info('meta response', { id, provider: 'rama', hasMeta: !!result?.meta, videos });
       return result || { meta: null };
     }
 
   } catch (err) {
     log.error(`meta failed: ${err.message}`, { type, id });
+    if (id.startsWith('kisskh_')) {
+      const fallback = { meta: _fallbackMetaForId(id, 'series') };
+      log.warn('meta fallback served after error', { id, provider: 'kisskh' });
+      return fallback;
+    }
   }
 
   return { meta: null };
