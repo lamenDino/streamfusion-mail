@@ -380,7 +380,7 @@ function _buildMeta(id, serieId, data, castData) {
     poster: data.thumbnail,
     background: data.thumbnail || undefined,
     description: data.description || '',
-    releaseInfo: data.releaseDate ? data.releaseDate.slice(0, 4) : undefined,
+    releaseInfo: data.releaseDate ? data.releaseDate.slice(0, 4) : '',
     status: data.status || undefined,
     country: data.country || undefined,
     genres: Array.isArray(data.genres) && data.genres.length
@@ -388,24 +388,15 @@ function _buildMeta(id, serieId, data, castData) {
       : (data.subCategory ? [data.subCategory] : undefined),
     cast: cast && cast.length ? cast : undefined,
     serieId,
-    videos: (data.episodes || []).map((ep, idx) => {
-      const v = {
-        id: `${id}:${ep.id}`,
-        title: ep.title || `Episode ${ep.number || idx + 1}`,
-        season: Number(ep.season) || 1,
-        episode: Number(ep.episode || ep.number || idx + 1)
-      };
-      if (ep.thumbnail || data.thumbnail) v.thumbnail = ep.thumbnail || data.thumbnail;
-      const ov = ep.description || ep.overview || ep.synopsis;
-      if (ov) v.overview = ov;
-      if (ep.releaseDate) {
-        try {
-          const d = new Date(ep.releaseDate);
-          if (!isNaN(d.getTime())) v.released = d.toISOString();
-        } catch (e) {}
-      }
-      return v;
-    }),
+    videos: (data.episodes || []).map((ep, idx) => ({
+      id: `${id}:${ep.id}`,
+      title: ep.title || `Episode ${ep.number || idx + 1}`,
+      season: Number(ep.season) || 1,
+      episode: Number(ep.episode || ep.number || idx + 1),
+      overview: ep.description || ep.overview || ep.synopsis || '',
+      thumbnail: ep.thumbnail || data.thumbnail,
+      released: ep.releaseDate || '',
+    })),
   };
 }
 
@@ -658,31 +649,21 @@ async function getStreams(stremioId, config = {}) {
       rawUrl    = extractedUrl;
       if (!rawUrl) {
         log.warn('no stream found via browser', { serieId, episodeId });
-        return [{
-          name: '[DEBUG]\nKissKH Browser',
-          title: `Browser timed out or blocked by Cloudflare Turnstile.\nSerie: ${serieId} / Ep: ${episodeId}`,
-          url: 'http://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8'
-        }];
+        return [{ name: '[DEBUG]\\nKissKH', title: 'Nessun URL ottenuto da Browserless.\\nRiprova.', url: 'http://localhost/error.mp4' }];
       }
       subtitles = await _getSubtitlesFromApiUrl(subApiUrl || `${API_BASE}/Sub/${episodeId}?kkey=${SUB_KKEY}`, serieId, episodeId);
     }
 
     if (!rawUrl) {
       log.warn('no stream found', { serieId, episodeId });
-        return [{
-          name: '[DEBUG]\nKissKH',
-          title: `Stream blocked by Cloudflare.\nSerie: ${serieId} / Ep: ${episodeId}`,
-          url: 'http://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8'
-        }];
+      return [{ name: '[DEBUG]\\nKissKH', title: 'Nessun stream finale recuperato.\\nRiprova.', url: 'http://localhost/error.mp4' }];
+    }
+
     // Last guard: avoid returning dead links that show in Stremio but fail to start.
     const playable = await _isLikelyPlayableHls(rawUrl, config.proxyUrl);
     if (!playable) {
       log.warn('final stream URL probe failed, returning no streams', { serieId, episodeId, url: rawUrl.slice(0, 100) });
-      return [{
-          name: '[DEBUG]\nKissKH Blocked',
-          title: `Stream link extracted but probe failed (403 Forbidden). Cloudflare restriction likely.\nUrl: ${rawUrl.slice(0, 50)}...`,
-          url: 'http://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8'
-      }];
+      return [{ name: '[DEBUG]\\nKissKH', title: 'Stream trovato ma inattivo.\\nRiprova.', url: 'http://localhost/error.mp4' }];
     }
     streamCache.set(cacheKey, { url: rawUrl, subtitles });
   }
@@ -690,7 +671,7 @@ async function getStreams(stremioId, config = {}) {
   // Validate URL before wrapping
   if (!rawUrl || !rawUrl.startsWith('http')) {
     log.warn('invalid stream URL format, skipping', { rawUrl: rawUrl ? rawUrl.slice(0, 80) : null });
-    return [];
+    return [{ name: '[DEBUG]\\nKissKH', title: 'Stream URL non valido.\\nRiprova.', url: 'http://localhost/error.mp4' }];
   }
 
   // Wrap stream URL through MediaFlow Proxy if configured
@@ -1113,4 +1094,392 @@ async function _fetchStreamViaApi(serieId, episodeId, proxyUrl) {
 
     if (fsResult) return fsResult;
     log.info('FlareSolverr stream failed/timed out — trying direct axios fallback');
-  } // End Flaresolverrundefined
+  }
+
+  // ── 2. Direct axios with proxy (api.kisskh.co is reachable without CF cookie) ──
+  const proxyAgent2 = proxyUrl ? makeProxyAgent(proxyUrl) : getProxyAgent();
+  const proxyCfg   = proxyAgent2 ? { httpsAgent: proxyAgent2, httpAgent: proxyAgent2, proxy: false } : {};
+  const dramaPageReferer = `${SITE_BASE}/Drama/Any/Episode-Any?id=${serieId}&ep=${episodeId}`;
+  const directHeaders = {
+    ..._baseHeaders(),
+    'Accept': 'application/json, text/plain, */*',
+    'Referer': dramaPageReferer,
+    'Origin': SITE_BASE,
+    'X-Requested-With': 'XMLHttpRequest',
+  };
+  for (const [type, source] of [[2, 1], [1, 0], [2, 0], [1, 1]]) {
+    const url = `${API_BASE}/DramaList/Episode/${episodeId}?type=${type}&sub=0&source=${source}&quality=auto`;
+    try {
+      log.debug(`direct axios type=${type} source=${source}`, { episodeId });
+      const { data } = await axios.get(url, { headers: directHeaders, timeout: 8_000, ...proxyCfg });
+      if (typeof data === 'string' && (data.includes('<html') || data.includes('Just a moment'))) {
+        log.debug('direct axios: CF challenge — giving up on direct');
+        break;
+      }
+      const result = _parseVideoData(data);
+      if (result) {
+        log.info(`direct axios: stream found (type=${type},source=${source})`, { episodeId, url: result.streamUrl.slice(0, 80) });
+        return result;
+      }
+    } catch (err) {
+      log.debug(`direct axios type=${type} source=${source} failed: ${err?.response?.status ?? err.message}`);
+    }
+  }
+
+  // ── 3. CF clearance cookie fallback ──────────────────────────────────────
+  const cfClearance = (process.env.CF_CLEARANCE_KISSKH || '').trim();
+  if (cfClearance) {
+    const cookieVal = cfClearance.startsWith('cf_clearance=') ? cfClearance : `cf_clearance=${cfClearance}`;
+    const cookieHeaders = { ..._baseHeaders(), 'Cookie': cookieVal };
+    const proxyAgent = proxyUrl ? makeProxyAgent(proxyUrl) : getProxyAgent();
+    const proxyConfig = proxyAgent ? { httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false } : {};
+
+    for (const [type, source] of [[2, 1], [1, 0], [2, 0], [1, 1]]) {
+      const url = `${API_BASE}/DramaList/Episode/${episodeId}?type=${type}&sub=0&source=${source}&quality=auto`;
+      try {
+        log.debug(`cookie API try type=${type} source=${source}`, { episodeId });
+        const { data } = await axios.get(url, { headers: cookieHeaders, timeout: 8_000, ...proxyConfig });
+        if (typeof data === 'string' && (data.includes('<html') || data.includes('Just a moment'))) {
+          log.debug(`cookie API: CF challenge returned for type=${type}`);
+          break;
+        }
+        const result = _parseVideoData(data);
+        if (result) {
+          log.info(`cookie API stream found (type=${type},source=${source})`, { episodeId, url: result.streamUrl.slice(0, 80) });
+          return result;
+        }
+      } catch (err) {
+        const status = err?.response?.status;
+        log.debug(`cookie API type=${type} source=${source} failed: ${status ?? err.message}`);
+      }
+    }
+    log.warn('cookie API: no stream URL found', { episodeId });
+  } else {
+    log.debug('No CF_CLEARANCE_KISSKH configured');
+  }
+
+  return null;
+}
+
+// ─── Combined stream + subtitle extraction (single browser session) ───────────
+
+/**
+ * Opens ONE browser session on the episode page and intercepts BOTH the HLS
+ * stream URL (*.m3u8?v=…) and the subtitle API endpoint (/api/Sub/…).
+ * Returns as soon as both are found or after STREAM_MAX_WAIT ms.
+ *
+ * @param {string} serieId
+ * @param {string|number} episodeId
+ * @returns {Promise<{streamUrl:string|null, subApiUrl:string|null}>}
+ */
+async function _extractStreamAndSubs(serieId, episodeId) {
+  const MAX_WAIT = Number(process.env.STREAM_MAX_WAIT) || 45_000; // ms
+  const browser = await launchBrowser();
+  let streamUrl = null;
+  let subApiUrl = null;
+
+  try {
+    const page = await browser.newPage();
+    await page.setUserAgent(
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+    );
+
+    // Authenticate with proxy if PROXY_URL is set (credential from URL like http://user:pass@host:port)
+    const proxyUrl = (process.env.PROXY_URL || '').trim();
+    if (proxyUrl) {
+      try {
+        const u = new URL(proxyUrl);
+        if (u.username && u.password) {
+          await page.authenticate({ username: u.username, password: u.password });
+          log.debug('proxy authentication set for page');
+        }
+      } catch (_) { /* ignore parse errors */ }
+    }
+
+    // NOTE: Do NOT inject CF_CLEARANCE_KISSKH here — it may be stale or for a different
+    // domain (kisskh.co vs kisskh.do). Injecting a wrong cookie prevents the browser from
+    // solving the CF challenge fresh. Let Browserless.io handle CF naturally.
+
+    // Block heavy resources; intercept m3u8 + sub API
+    await page.setRequestInterception(true);
+    const normalizeCandidateUrl = (u) => {
+      if (!u || typeof u !== 'string') return null;
+      const s = u.trim().replace(/\\\//g, '/');
+      if (!s) return null;
+      if (s.startsWith('//')) return `https:${s}`;
+      if (/^https?:\/\//i.test(s)) return s;
+      return null;
+    };
+
+    const pickVideoFromPayload = (payload) => {
+      if (!payload || typeof payload !== 'object') return null;
+      const candidates = [payload.Video, payload.video, payload.Video_tmp, payload.video_tmp, payload.url, payload.stream, payload.ThirdParty]
+        .map(normalizeCandidateUrl)
+        .filter(Boolean);
+      return candidates.length ? candidates[0] : null;
+    };
+
+    page.on('request', req => {
+      const rt = req.resourceType();
+      const u = req.url();
+
+      // Intercept HLS stream as early as possible, before any abort rules.
+      // Some episodes request m3u8 as resourceType=media.
+      if (!streamUrl && /\.m3u8(\?.*)?$/i.test(u)) {
+        streamUrl = u;
+        const hasV  = /[?&]v=[a-zA-Z0-9_-]+/.test(u);
+        log.info(`intercepted stream (hasVParam=${hasV}): ${u.slice(0, 120)}`);
+      }
+
+      // Intercept subtitle API endpoint
+      if (!subApiUrl && u.includes('/api/Sub/')) {
+        subApiUrl = u;
+        log.debug(`intercepted sub API: ${u.slice(0, 120)}`);
+      }
+
+      // Block heavy resources, but never abort m3u8 requests.
+      if (['image', 'font', 'stylesheet'].includes(rt) || (rt === 'media' && !/\.m3u8(\?.*)?$/i.test(u))) {
+        req.abort().catch(() => {});
+        return;
+      }
+
+      // Log XHR/fetch for debugging
+      if (!streamUrl && (rt === 'xhr' || rt === 'fetch')) {
+        log.debug(`[intercept] ${rt} ${u.slice(0, 120)}`);
+      }
+      req.continue().catch(() => {});
+    });
+
+    // Some episodes fetch stream JSON via .png but delay the actual m3u8 request.
+    page.on('response', async (res) => {
+      if (streamUrl) return;
+      const u = res.url();
+      if (!/\/api\/DramaList\/Episode\/\d+\.png/i.test(u)) return;
+      try {
+        const txt = await res.text();
+        const data = JSON.parse(txt);
+        const found = pickVideoFromPayload(data);
+        if (found) {
+          streamUrl = found;
+          log.info(`intercepted stream from .png response: ${found.slice(0, 120)}`);
+        }
+      } catch {
+        // Ignore parse errors from non-JSON responses.
+      }
+    });
+
+    const targetUrl = `${SITE_BASE}/Drama/Any/Episode-Any?id=${serieId}&ep=${episodeId}`;
+    log.info('navigating to episode page', { targetUrl });
+
+    // Use 'domcontentloaded' — faster than 'networkidle2', CF challenge resolves faster
+    // then we let the polling loop wait for the HLS intercept
+    await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: MAX_WAIT }).catch((e) => {
+      log.warn(`page.goto warning: ${e.message.slice(0, 80)}`);
+    });
+
+    // Log actual URL + title; if CF challenge is detected, wait for auto-resolution
+    try {
+      const finalUrl = page.url();
+      const title = await page.title().catch(() => '');
+      log.info('page loaded', { finalUrl: finalUrl.slice(0, 100), title: title.slice(0, 60) });
+      const isCfChallenge = (t) => t.toLowerCase().includes('just a moment') || t.toLowerCase().includes('checking your browser');
+      if (isCfChallenge(title)) {
+        log.warn('CF challenge detected — waiting up to 18s for auto-resolution...');
+        const cfDeadline = Date.now() + 18_000;
+        while (Date.now() < cfDeadline) {
+          await _sleep(1_500);
+          const t2 = await page.title().catch(() => '');
+          if (!isCfChallenge(t2)) {
+            log.info('CF challenge resolved, title now:', { title: t2.slice(0, 60) });
+            break;
+          }
+        }
+      }
+    } catch (_) {}
+
+    // After potential CF resolution, extract the fresh cf_clearance and cache it so the
+    // API fallback path on future warm requests benefits from a valid kisskh.do cookie.
+    try {
+      const pageCookies = await page.cookies();
+      const freshCf = pageCookies.find(c => c.name === 'cf_clearance');
+      if (freshCf && freshCf.value) {
+        log.info(`browser obtained fresh cf_clearance: ${freshCf.value.slice(0, 12)}...`);
+        process.env.CF_CLEARANCE_KISSKH = freshCf.value;
+      }
+    } catch (_) {}
+
+    // Proactively fetch the .png episode payload from the browser context.
+    // This runs with the page's live cookies/challenge state and can succeed
+    // even when server-side axios receives 403.
+    if (!streamUrl) {
+      const browserPngUrl = await page.evaluate(async ({ epId, kkey }) => {
+        const normalize = (u) => {
+          if (!u || typeof u !== 'string') return null;
+          const s = u.trim().replace(/\\\//g, '/');
+          if (!s) return null;
+          if (s.startsWith('//')) return `https:${s}`;
+          if (/^https?:\/\//i.test(s)) return s;
+          return null;
+        };
+        const pick = (payload) => {
+          if (!payload || typeof payload !== 'object') return null;
+          const fields = [payload.Video, payload.video, payload.Video_tmp, payload.video_tmp, payload.url, payload.stream, payload.ThirdParty];
+          for (const f of fields) {
+            const u = normalize(f);
+            if (u) return u;
+          }
+          return null;
+        };
+        const candidateUrls = [
+          `/api/DramaList/Episode/${epId}.png?kkey=${encodeURIComponent(kkey)}`,
+          `/api/DramaList/Episode/${epId}.png?err=false&ts=null&time=null&kkey=${encodeURIComponent(kkey)}`,
+        ];
+        for (const u of candidateUrls) {
+          try {
+            const r = await fetch(u, { credentials: 'include' });
+            if (!r.ok) continue;
+            const txt = await r.text();
+            const json = JSON.parse(txt);
+            const found = pick(json);
+            if (found) return found;
+          } catch (_) {
+            // Try next URL variant.
+          }
+        }
+        return null;
+      }, { epId: String(episodeId), kkey: EPISODE_KKEY }).catch(() => null);
+
+      if (browserPngUrl) {
+        streamUrl = browserPngUrl;
+        log.info(`browser page fetch resolved .png stream: ${browserPngUrl.slice(0, 120)}`);
+      }
+    }
+
+    // Give the video player 3s to start loading after the DOM is ready,
+    // then nudge common player controls to trigger lazy stream requests.
+    await page.evaluate(() => {
+      const selectors = [
+        'button[aria-label*="play" i]',
+        '.vjs-big-play-button',
+        '.jw-icon-playback',
+        '.plyr__control--overlaid',
+        'video',
+        '.player',
+      ];
+      for (const sel of selectors) {
+        const el = document.querySelector(sel);
+        if (el && typeof el.click === 'function') {
+          try { el.click(); } catch (_) {}
+        }
+      }
+    }).catch(() => {});
+
+    // Give the video player 3s to start loading after the DOM is ready,
+    // then poll until both m3u8 + sub are intercepted (or timeout).
+    await _sleep(3_000);
+    const deadline = Date.now() + MAX_WAIT;
+    while (Date.now() < deadline && !(streamUrl && subApiUrl)) {
+      await _sleep(500);
+    }
+
+    log.info('extraction done', { streamFound: !!streamUrl, subFound: !!subApiUrl });
+  } catch (err) {
+    log.error(`browser extraction error: ${err.message}`);
+  } finally {
+    await browser.close().catch(() => {});
+  }
+
+  return { streamUrl, subApiUrl };
+}
+
+async function _extractStream(serieId, episodeId) {
+  const { streamUrl } = await _extractStreamAndSubs(serieId, episodeId);
+  return streamUrl;
+}
+
+// ─── Subtitle extraction ───────────────────────────────────────────────────────
+
+/**
+ * Fetch & decrypt subtitles given an already-intercepted sub API URL.
+ * No browser is launched here.
+ */
+async function _getSubtitlesFromApiUrl(subApiUrl, serieId, episodeId) {
+  const cacheKey = `sub:${serieId}:${episodeId}`;
+  const cached = subCache.get(cacheKey);
+  if (cached) return cached;
+
+  if (!subApiUrl) {
+    log.warn('no subtitle API endpoint found', { serieId, episodeId });
+    return [];
+  }
+
+  const headers = _baseHeaders();
+  let subtitleList;
+  try {
+    const resp = await axios.get(subApiUrl, { headers, timeout: 10_000, responseType: 'json' });
+    subtitleList = Array.isArray(resp.data) ? resp.data : [resp.data];
+  } catch (err) {
+    log.warn(`subtitle API request failed: ${err.message}`);
+    return [];
+  }
+
+  // Filter Italian
+  const ITALIAN_PATTERN = /^https?:\/\/.*\.it\.(srt|txt1|txt)$/i;
+  const itSubs = subtitleList.filter(s => {
+    const lang = (s.land || s.label || '').toLowerCase();
+    const src = _resolveSubUrl(s);
+    return lang === 'it' || lang === 'italian' || (src && ITALIAN_PATTERN.test(src));
+  });
+
+  const decoded = [];
+  const H = _baseHeaders();
+  const STATIC_KEY = Buffer.from('AmSmZVcH93UQUezi');
+  const STATIC_IV  = Buffer.from('ReBKWW8cqdjPEnF6');
+
+  for (const sub of itSubs) {
+    const subUrl = _resolveSubUrl(sub);
+    if (!subUrl) continue;
+    try {
+      const sresp = await axios.get(subUrl, { responseType: 'arraybuffer', headers: H, timeout: 10_000 });
+      const buf = Buffer.from(sresp.data);
+      const isEncrypted = /\.(txt1|txt)$/i.test(subUrl);
+      let content;
+
+      if (isEncrypted) {
+        const asText = buf.toString('utf8').trim();
+        content = asText.startsWith('1') || asText.startsWith('WEBVTT')
+          ? decryptKisskhSubtitleFull(asText)
+          : decryptKisskhSubtitleStatic(buf, STATIC_KEY, STATIC_IV);
+      } else {
+        content = buf.toString('utf8');
+      }
+
+      if (content && /^\d+\r?\n\d{2}:\d{2}:\d{2},\d{3}/.test(content)) {
+        decoded.push({ lang: 'it', content });
+        log.info('Italian subtitle decoded', { subUrl: subUrl.slice(0, 60) });
+        break; // First valid subtitle is enough
+      }
+    } catch (err) {
+      log.warn(`subtitle fetch/decrypt error: ${err.message}`);
+    }
+  }
+
+  subCache.set(cacheKey, decoded);
+  return decoded;
+}
+
+function _resolveSubUrl(s) {
+  if (s.src) return s.src;
+  if (s.GET && s.GET.host && s.GET.filename) {
+    let u = `${s.GET.scheme || 'https'}://${s.GET.host}${s.GET.filename}`;
+    if (s.GET.query && s.GET.query.v) u += `?v=${s.GET.query.v}`;
+    return u;
+  }
+  return null;
+}
+
+function _sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+module.exports = { getCatalog, getMeta, getStreams };
