@@ -34,8 +34,8 @@ const SITE_BASE = 'https://kisskh.do';
 // The .png endpoint bypasses Cloudflare WAF entirely (CF only protects the old
 // /api/DramaList/Episode/{id}?type= JSON endpoint, not the .png variant).
 // These keys are static across all browser sessions — update if streams stop.
-const EPISODE_KKEY = '9DC340B466AD8C79C6030B4737F21ED6DB2B807B8BCD60B199AFB8361B96427D6A7BF9627B32C627EBA47690D1EF03B6E6B8E8BD440FEEFB8AE14D140B2883A596198F61B79B68A51B79FBAB7B752CA4923B904FA01DC91287F075399A2930FBD6E047805CAFBD8F1B8B138E2FEF25A0DAA92D39C0C7A5308B40266FDFCDE169';
-const SUB_KKEY     = '7D756B33C55C75F98A242158EF0E6D04244378FE0F2FF71EF50505F2AA465E6F851717DE8BF10A5127A53A91C1211F6D3417DC3E3FF45C8F1FDDF218EFE3F5BEBCAE574B45A339A2DF7A3F0DBE04B4F9D3818D15AADC36A2789667686DF86F3C244C1F3C3AB2332B8CA03CDBE7C372498EE03AD820C8B903FF5A0D2698A2B945';
+const EPISODE_KKEY = '1DA20BA0FA767F7FBC784A34E39191A0978830BDC4152695A655BD63A7227408BD1FEA7FCBBA0B80413AD348FADFBF1FFAC32028F7C8B5FC7F138BC2CFFC324CF3B8A357AF3C12242329E3AC9458C1FE0F3FA83DB7CC86907707598EC18789D09A02B62FEF850583B58B374BE58CBD1F6257A54C12F176DDF23A33D1AB8ED294';
+const SUB_KKEY     = '43B832ED7618A14320177D239448E8189AAC2F524A0CE644F80C476A5A3F43BB031BAD3AFA35E58F9507DE22A4FB2CC4FC069410DF0AD1AF514B2FC3C95F256916A05B8620570ECAE389037A88887266F4E6CA6A305C33E45B2F62D488DB3E72E6578BAEB2CD39ED30F2E29E13A3590E5872E3EAA36C73EB5438871F3AB8A700';
 
 const catalogCache = new TTLCache({ ttl: 10 * 60_000, maxSize: 200 });
 const metaCache    = new TTLCache({ ttl: 30 * 60_000, maxSize: 500 });
@@ -839,8 +839,11 @@ async function _fetchStreamViaPngApi(episodeId, proxyUrl) {
 
   const parsePngPayload = (payload) => {
     let json = payload;
-    if (typeof payload === 'string') {
-      try { json = JSON.parse(payload); } catch { return null; }
+    if (Buffer.isBuffer(payload)) {
+      json = payload.toString('utf8');
+    }
+    if (typeof json === 'string') {
+      try { json = JSON.parse(json); } catch { return null; }
     }
     if (!json || typeof json !== 'object') return null;
     const videoUrl = json.Video || json.video;
@@ -862,6 +865,7 @@ async function _fetchStreamViaPngApi(episodeId, proxyUrl) {
     const { data } = await axios.get(url, {
       headers: { ..._baseHeaders(), 'Accept': 'application/json, text/plain, */*' },
       timeout: 8_000,
+      responseType: 'text',
       ...proxyConfig,
     });
     const parsed = parsePngPayload(data);

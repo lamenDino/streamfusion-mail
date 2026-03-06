@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [1.6.1] — 2026-03-06
+
+### Fixed
+- **KissKH `.png` stream endpoint di nuovo funzionante** — aggiornati i `kkey` statici (`EPISODE_KKEY`, `SUB_KKEY`) ai valori correnti intercettati dal player live.
+- **Parsing payload `.png` robusto** — ora gestisce payload `Buffer`/`text`/`object` in modo consistente e forza `responseType: text` nelle chiamate axios per evitare falsi null parsing.
+
+---
+
 ## [1.6.0] — 2026-03-06
 
 ### Changed
