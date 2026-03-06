@@ -482,6 +482,7 @@ async function getMeta(id, config = {}) {
           fetchFirst(dramaUrls, 10_000, false),
           castData ? Promise.resolve(castData) : fetchFirst(castUrls, 10_000, false)
         ]);
+      }
     if (!data) {
       const fallback = _buildFallbackMeta(id, serieId);
       metaCache.set(id, fallback);
