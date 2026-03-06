@@ -588,13 +588,13 @@ async function getStreams(stremioId, config = {}) {
     if (!rawUrl) {
       // 3. Fallback: browser extraction (intercepts m3u8 via Puppeteer)
       log.info('heuristic fallback unavailable, trying browser extraction', { serieId, episodeId });
-      const BROWSER_STREAM_TIMEOUT = 32_000;
+      const BROWSER_STREAM_TIMEOUT = 45_000;
       const browserResult = await withTimeout(
         _extractStreamAndSubs(serieId, episodeId),
         BROWSER_STREAM_TIMEOUT,
         'kisskh.browserStreamExtraction'
       ).catch(() => {
-        log.warn('browser stream extraction timed out (32s cap)', { serieId, episodeId });
+        log.warn('browser stream extraction timed out (45s cap)', { serieId, episodeId });
         return { streamUrl: null, subApiUrl: null };
       });
       const { streamUrl: extractedUrl, subApiUrl } = browserResult;
@@ -1115,7 +1115,7 @@ async function _fetchStreamViaApi(serieId, episodeId, proxyUrl) {
  * @returns {Promise<{streamUrl:string|null, subApiUrl:string|null}>}
  */
 async function _extractStreamAndSubs(serieId, episodeId) {
-  const MAX_WAIT = Number(process.env.STREAM_MAX_WAIT) || 40_000; // ms
+  const MAX_WAIT = Number(process.env.STREAM_MAX_WAIT) || 45_000; // ms
   const browser = await launchBrowser();
   let streamUrl = null;
   let subApiUrl = null;
@@ -1249,6 +1249,25 @@ async function _extractStreamAndSubs(serieId, episodeId) {
         process.env.CF_CLEARANCE_KISSKH = freshCf.value;
       }
     } catch (_) {}
+
+    // Give the video player 3s to start loading after the DOM is ready,
+    // then nudge common player controls to trigger lazy stream requests.
+    await page.evaluate(() => {
+      const selectors = [
+        'button[aria-label*="play" i]',
+        '.vjs-big-play-button',
+        '.jw-icon-playback',
+        '.plyr__control--overlaid',
+        'video',
+        '.player',
+      ];
+      for (const sel of selectors) {
+        const el = document.querySelector(sel);
+        if (el && typeof el.click === 'function') {
+          try { el.click(); } catch (_) {}
+        }
+      }
+    }).catch(() => {});
 
     // Give the video player 3s to start loading after the DOM is ready,
     // then poll until both m3u8 + sub are intercepted (or timeout).

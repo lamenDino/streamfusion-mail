@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [1.6.3] — 2026-03-06
+
+### Changed
+- **Browser fallback piu persistente su Vercel** — timeout estrazione stream aumentato da `32s` a `45s` per lasciare margine alla risoluzione challenge/player su episodi lenti.
+- **Player nudge automatico** — dopo il caricamento pagina, il resolver prova a cliccare i controlli play piu comuni (`vjs/jw/plyr/video`) per forzare l'emissione delle richieste stream lazy.
+
+---
+
 ## [1.6.2] — 2026-03-06
 
 ### Fixed
