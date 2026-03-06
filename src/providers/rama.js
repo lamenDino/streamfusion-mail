@@ -85,7 +85,7 @@ async function getCatalog(skip = 0, search = '', config = {}) {
 
       pageItems.push({
         id,
-        type: 'kdrama',
+        type: 'series',
         name: title,
         poster,
         posterShape: 'poster',
@@ -229,7 +229,7 @@ async function getMeta(id, config = {}) {
 
   const meta = {
     id: seriesId,
-    type: 'kdrama',
+    type: 'series',
     name,
     poster,
     background: background || undefined,
@@ -523,7 +523,7 @@ async function _tmdbFallbackMeta(seriesId, slug, config) {
 }
 
 function _emptyMeta(id) {
-  return { id, type: 'kdrama', name: id.replace(/^rama_/, '').replace(/-/g, ' '), episodes: [] };
+  return { id, type: 'series', name: id.replace(/^rama_/, '').replace(/-/g, ' '), episodes: [] };
 }
 
 module.exports = { getCatalog, getMeta, getStreams };

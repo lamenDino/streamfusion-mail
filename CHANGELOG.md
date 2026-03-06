@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [1.6.6] — 2026-03-06
+
+### Fixed
+- **Catalogo Rama compatibile con Stremio Home/Discover** — il provider Rama restituiva item/meta con `type: "kdrama"` mentre il manifest espone solo `series`. Questo causava errori UI tipo *"No addons were requested for this meta!"* quando si apriva una card Rama dalla home.
+- Allineati i tipi in `src/providers/rama.js` (`catalog item`, `meta`, fallback `_emptyMeta`) da `kdrama` a `series`.
+
+---
+
 ## [1.6.5] — 2026-03-06
 
 ### Fixed
