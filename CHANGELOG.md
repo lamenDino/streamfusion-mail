@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [1.5.5] — 2026-03-06
+
+### Fixed
+- **Stream KissKH visibile ma non avviabile** — alcuni fallback (es. URL HLS predittivo) potevano produrre link `404`, quindi Stremio mostrava la sorgente ma la riproduzione falliva. Aggiunta validazione server-side dell'URL HLS (`GET` breve + verifica `#EXTM3U`) prima di restituire lo stream.
+- **Riduzione stream "falsi positivi"** — se l'URL non è realmente riproducibile, il provider non lo espone e continua con i fallback; guard finale prima del cache/set per evitare dead links.
+
+---
+
 ## [1.5.4] — 2026-03-06
 
 ### Changed

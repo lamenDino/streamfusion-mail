@@ -535,9 +535,14 @@ async function getStreams(stremioId, config = {}) {
     if (!rawUrl) {
       const predicted = _predictHlsUrl(serieId, episodeNumHint);
       if (predicted) {
-        rawUrl = predicted;
-        subtitles = await _getSubtitlesFromApiUrl(`${API_BASE}/Sub/${episodeId}?kkey=${SUB_KKEY}`, serieId, episodeId);
-        log.warn('using heuristic predicted HLS URL fallback', { serieId, episodeId, episodeNumHint, url: predicted.slice(0, 90) });
+        const ok = await _isLikelyPlayableHls(predicted, config.proxyUrl);
+        if (ok) {
+          rawUrl = predicted;
+          subtitles = await _getSubtitlesFromApiUrl(`${API_BASE}/Sub/${episodeId}?kkey=${SUB_KKEY}`, serieId, episodeId);
+          log.warn('using heuristic predicted HLS URL fallback', { serieId, episodeId, episodeNumHint, url: predicted.slice(0, 90) });
+        } else {
+          log.warn('heuristic predicted HLS URL is not playable', { serieId, episodeId, episodeNumHint, url: predicted.slice(0, 90) });
+        }
       }
     }
 
@@ -564,6 +569,13 @@ async function getStreams(stremioId, config = {}) {
 
     if (!rawUrl) {
       log.warn('no stream found', { serieId, episodeId });
+      return [];
+    }
+
+    // Last guard: avoid returning dead links that show in Stremio but fail to start.
+    const playable = await _isLikelyPlayableHls(rawUrl, config.proxyUrl);
+    if (!playable) {
+      log.warn('final stream URL probe failed, returning no streams', { serieId, episodeId, url: rawUrl.slice(0, 100) });
       return [];
     }
     streamCache.set(cacheKey, { url: rawUrl, subtitles });
@@ -611,6 +623,27 @@ function _predictHlsUrl(serieId, episodeNum) {
   if (!serieId || !episodeNum) return null;
   // Common KissKH pattern observed in production/local captures
   return `https://hls.cdnvideo11.shop/hls07/${serieId}/Ep${episodeNum}_index.m3u8`;
+}
+
+async function _isLikelyPlayableHls(url, proxyUrl) {
+  if (!url || !url.startsWith('http')) return false;
+  const proxyAgent = proxyUrl ? makeProxyAgent(proxyUrl) : getProxyAgent();
+  const proxyConfig = proxyAgent ? { httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false } : {};
+  try {
+    const resp = await axios.get(url, {
+      timeout: 6_000,
+      responseType: 'text',
+      maxContentLength: 256 * 1024,
+      maxBodyLength: 256 * 1024,
+      validateStatus: () => true,
+      ...proxyConfig,
+    });
+    if (resp.status < 200 || resp.status >= 300) return false;
+    const text = String(resp.data || '');
+    return text.includes('#EXTM3U');
+  } catch {
+    return false;
+  }
 }
 
 async function _fetchStreamFromEpisodeHtml(serieId, episodeId, proxyUrl) {
