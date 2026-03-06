@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [1.6.8] — 2026-03-06
+
+### Fixed
+- **Schermata Stremio "No metadata was found" su ID KissKH** — quando il fetch meta upstream falliva/intermittente, il provider restituiva `meta: null` e la UI mostrava errore totale.
+- `kisskh.getMeta()` ora restituisce sempre un **meta fallback valido** per ID `kisskh_*` (mai `null`), con descrizione di retry e `videos: []`, evitando la schermata di errore bloccante.
+
+---
+
 ## [1.6.7] — 2026-03-06
 
 ### Fixed

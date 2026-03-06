@@ -416,6 +416,22 @@ function _metaToCatalogItem(meta) {
   return item;
 }
 
+function _buildFallbackMeta(id, serieId) {
+  return {
+    id,
+    type: 'series',
+    name: `KissKH ${serieId}`,
+    poster: '',
+    background: undefined,
+    description: 'Metadata temporaneamente non disponibile. Riprova tra pochi secondi.',
+    releaseInfo: '',
+    genres: undefined,
+    cast: undefined,
+    serieId,
+    videos: [],
+  };
+}
+
 // ─── Meta ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -460,7 +476,11 @@ async function getMeta(id, config = {}) {
       if (!castData) castData = await fetchFirst(castUrls, 8_000, false);
     }
 
-    if (!data) return { meta: null };
+    if (!data) {
+      const fallback = _buildFallbackMeta(id, serieId);
+      metaCache.set(id, fallback);
+      return { meta: fallback };
+    }
 
     const meta = _buildMeta(id, serieId, data, castData);
 
@@ -498,7 +518,9 @@ async function getMeta(id, config = {}) {
     return { meta };
   } catch (err) {
     log.error(`getMeta failed: ${err.message}`, { id });
-    return { meta: null };
+    const fallback = _buildFallbackMeta(id, serieId);
+    metaCache.set(id, fallback);
+    return { meta: fallback };
   }
 }
 
