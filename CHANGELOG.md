@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [1.5.7] — 2026-03-06
+
+### Changed
+- **KissKH API stream selection migliorata** — invece di usare solo una URL (`Video`), il provider ora considera tutte le candidate restituite dall'API (`Video_tmp`, `Video`, `ThirdParty`, `video`, ecc.) e sceglie la prima realmente riproducibile.
+- Le candidate API vengono tokenizzate con il `v=` estratto (quando disponibile) prima del probe playability.
+
+---
+
 ## [1.5.6] — 2026-03-06
 
 ### Added

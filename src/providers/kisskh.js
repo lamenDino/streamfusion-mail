@@ -521,8 +521,19 @@ async function getStreams(stremioId, config = {}) {
     const apiResult = await _fetchStreamViaApi(serieId, episodeId, config.proxyUrl);
 
     if (apiResult && apiResult.streamUrl) {
-      rawUrl     = _withVToken(apiResult.streamUrl, vToken);
+      const apiCandidates = [apiResult.streamUrl, ...(apiResult.altUrls || [])]
+        .map(u => _withVToken(u, vToken))
+        .filter(Boolean);
+      for (const candidate of apiCandidates) {
+        if (await _isLikelyPlayableHls(candidate, config.proxyUrl)) {
+          rawUrl = candidate;
+          break;
+        }
+      }
       subtitles  = await _getSubtitlesFromApiUrl(apiResult.subApiUrl, serieId, episodeId);
+      if (!rawUrl && apiCandidates.length) {
+        log.warn('api candidates found but none playable', { serieId, episodeId, count: apiCandidates.length });
+      }
     } else {
       // 2. Fallback: parse episode HTML for embedded m3u8 URLs (fast, no browser)
       log.info('direct API failed, trying HTML stream extraction fallback', { serieId, episodeId });
@@ -865,9 +876,21 @@ async function _fetchStreamViaApi(serieId, episodeId, proxyUrl) {
   log.warn('.png API returned no stream, falling back to legacy approaches', { episodeId });
 
   const _parseVideoData = (data) => {
-    const videoUrl = data?.Video || data?.video || data?.url || data?.stream;
-    if (videoUrl && typeof videoUrl === 'string' && videoUrl.startsWith('http')) {
-      return { streamUrl: videoUrl, subApiUrl: `${API_BASE}/Sub/${episodeId}?kkey=${SUB_KKEY}` };
+    const rawCandidates = [
+      data?.Video_tmp,
+      data?.Video,
+      data?.video,
+      data?.url,
+      data?.stream,
+      data?.ThirdParty,
+    ];
+    const candidates = [...new Set(rawCandidates.filter(u => typeof u === 'string' && u.startsWith('http')))];
+    if (candidates.length) {
+      return {
+        streamUrl: candidates[0],
+        altUrls: candidates.slice(1),
+        subApiUrl: `${API_BASE}/Sub/${episodeId}?kkey=${SUB_KKEY}`,
+      };
     }
     return null;
   };
