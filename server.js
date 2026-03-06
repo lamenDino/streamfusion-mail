@@ -187,7 +187,7 @@ app.get([
   try {
     const metaResult = await handleMeta(req.params.type, req.params.id, config);
     // Don't cache null results — let Stremio retry next time
-    const age = metaResult && metaResult.meta ? 1800 : 0;
+    const age = (metaResult?.meta?.videos?.length > 0) ? 1800 : 0;
     stremioJson(res, metaResult, { maxAge: age });
   } catch (err) {
     log.error(`metaRoute: ${err.message}`);
