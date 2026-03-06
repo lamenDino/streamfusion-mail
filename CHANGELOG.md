@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [1.6.4] — 2026-03-06
+
+### Fixed
+- **`.png` probing multi-endpoint** — il resolver ora prova varianti endpoint `kisskh.do` e `kisskh.co` con query minima (`?kkey=`) e query legacy (`err/ts/time`) per aumentare la compatibilita tra mirror e anti-bot path.
+- **Fallback `.png` piu resiliente** — sia CF Worker che axios diretto iterano su tutte le varianti prima di dichiarare il ramo `.png` fallito.
+
+---
+
 ## [1.6.3] — 2026-03-06
 
 ### Changed

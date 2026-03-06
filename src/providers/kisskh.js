@@ -844,7 +844,14 @@ async function _fetchStreamFromEpisodeHtml(serieId, episodeId, proxyUrl) {
  * @returns {Promise<{streamUrl:string, subApiUrl:string}|null>}
  */
 async function _fetchStreamViaPngApi(episodeId, proxyUrl) {
-  const url = `${API_BASE}/DramaList/Episode/${episodeId}.png?err=false&ts=null&time=null&kkey=${EPISODE_KKEY}`;
+  const primaryDo = `https://kisskh.do/api/DramaList/Episode/${episodeId}.png`;
+  const primaryCo = `https://kisskh.co/api/DramaList/Episode/${episodeId}.png`;
+  const urls = [
+    `${primaryDo}?kkey=${EPISODE_KKEY}`,
+    `${primaryDo}?err=false&ts=null&time=null&kkey=${EPISODE_KKEY}`,
+    `${primaryCo}?kkey=${EPISODE_KKEY}`,
+    `${primaryCo}?err=false&ts=null&time=null&kkey=${EPISODE_KKEY}`,
+  ];
   const proxyAgent = proxyUrl ? makeProxyAgent(proxyUrl) : getProxyAgent();
   const proxyConfig = proxyAgent ? { httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false } : {};
 
@@ -878,29 +885,34 @@ async function _fetchStreamViaPngApi(episodeId, proxyUrl) {
 
   // Try CF Worker first if available (often bypasses anti-bot checks for this endpoint)
   if (getCfWorkerUrl()) {
-    const workerData = await _cfWorkerGet(url, 8_000, { xhr: '1', referer: `${SITE_BASE}/` });
-    const parsed = parsePngPayload(workerData);
-    if (parsed) {
-      log.info('.png API stream found via CF Worker', { episodeId, url: parsed.streamUrl.slice(0, 80) });
-      return parsed;
+    for (const url of urls) {
+      const workerData = await _cfWorkerGet(url, 8_000, { xhr: '1', referer: `${SITE_BASE}/` });
+      const parsed = parsePngPayload(workerData);
+      if (parsed) {
+        log.info('.png API stream found via CF Worker', { episodeId, url: parsed.streamUrl.slice(0, 80) });
+        return parsed;
+      }
     }
   }
 
-  try {
-    const { data } = await axios.get(url, {
-      headers: { ..._baseHeaders(), 'Accept': 'application/json, text/plain, */*' },
-      timeout: 8_000,
-      responseType: 'text',
-      ...proxyConfig,
-    });
-    const parsed = parsePngPayload(data);
-    if (!parsed) return null;
-    log.info('.png API stream found', { episodeId, url: parsed.streamUrl.slice(0, 80) });
-    return parsed;
-  } catch (err) {
-    log.warn(`_fetchStreamViaPngApi failed: ${err.message}`, { episodeId });
-    return null;
+  for (const url of urls) {
+    try {
+      const { data } = await axios.get(url, {
+        headers: { ..._baseHeaders(), 'Accept': 'application/json, text/plain, */*' },
+        timeout: 8_000,
+        responseType: 'text',
+        ...proxyConfig,
+      });
+      const parsed = parsePngPayload(data);
+      if (!parsed) continue;
+      log.info('.png API stream found', { episodeId, url: parsed.streamUrl.slice(0, 80) });
+      return parsed;
+    } catch (err) {
+      log.warn(`_fetchStreamViaPngApi failed: ${err.message}`, { episodeId });
+    }
   }
+
+  return null;
 }
 
 /**
