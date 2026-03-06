@@ -458,24 +458,30 @@ async function getMeta(id, config = {}) {
 
   try {
     const fetchFirst = async (urls, timeout, skipFlare = true) => {
-      for (const u of urls) {
-        const data = await _apiGet(u, timeout, config.proxyUrl, config.clientIp, skipFlare).catch(() => null);
-        if (data) return data;
-      }
-      return null;
-    };
+        try {
+          return await Promise.any(urls.map(async u => {
+            const res = await _apiGet(u, timeout, config.proxyUrl, config.clientIp, skipFlare);
+            if (!res) throw new Error('empty');
+            return res;
+          }));
+        } catch {
+          return null;
+        }
+      };
 
-    // Fast path first: plain JSON endpoints usually work without CF bypass.
-    let data = await fetchFirst(dramaUrls, 8_000, true);
-    let castData = await fetchFirst(castUrls, 6_000, true);
+      // Faster parallel execution
+      let [data, castData] = await Promise.all([
+        fetchFirst(dramaUrls, 8_000, true),
+        fetchFirst(castUrls, 8_000, true)
+      ]);
 
-    // Slow fallback only if drama detail failed: allow Worker/FlareSolverr chain.
-    if (!data) {
-      log.warn('meta drama fast-path failed, retrying with CF bypass', { id, serieId });
-      data = await fetchFirst(dramaUrls, 10_000, false);
-      if (!castData) castData = await fetchFirst(castUrls, 8_000, false);
-    }
-
+      // Slow fallback only if drama detail failed
+      if (!data) {
+        log.warn('meta drama fast-path failed, retrying with CF bypass', { id, serieId });
+        [data, castData] = await Promise.all([
+          fetchFirst(dramaUrls, 10_000, false),
+          castData ? Promise.resolve(castData) : fetchFirst(castUrls, 10_000, false)
+        ]);
     if (!data) {
       const fallback = _buildFallbackMeta(id, serieId);
       metaCache.set(id, fallback);
