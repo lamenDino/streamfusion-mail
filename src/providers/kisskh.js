@@ -388,15 +388,23 @@ function _buildMeta(id, serieId, data, castData) {
       : (data.subCategory ? [data.subCategory] : undefined),
     cast: cast && cast.length ? cast : undefined,
     serieId,
-    videos: (data.episodes || []).map((ep, idx) => ({
-      id: `${id}:${ep.id}`,
-      title: ep.title || `Episode ${ep.number || idx + 1}`,
-      season: Number(ep.season) || 1,
-      episode: Number(ep.episode || ep.number || idx + 1),
-      overview: ep.description || ep.overview || ep.synopsis || '',
-      thumbnail: ep.thumbnail || data.thumbnail,
-      released: ep.releaseDate || '',
-    })),
+    videos: (data.episodes || []).map((ep, idx) => {
+      const video = {
+        id: `${id}:${ep.id}`,
+        title: ep.title || `Episode ${ep.number || idx + 1}`,
+        season: Number(ep.season) || 1,
+        episode: Number(ep.episode || ep.number || idx + 1),
+        thumbnail: ep.thumbnail || data.thumbnail,
+      };
+
+      const overview = ep.description || ep.overview || ep.synopsis;
+      if (overview) video.overview = overview;
+
+      const released = ep.releaseDate;
+      if (released) video.released = released;
+
+      return video;
+    }),
   };
 }
 
