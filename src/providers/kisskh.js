@@ -1262,6 +1262,53 @@ async function _extractStreamAndSubs(serieId, episodeId) {
       }
     } catch (_) {}
 
+    // Proactively fetch the .png episode payload from the browser context.
+    // This runs with the page's live cookies/challenge state and can succeed
+    // even when server-side axios receives 403.
+    if (!streamUrl) {
+      const browserPngUrl = await page.evaluate(async ({ epId, kkey }) => {
+        const normalize = (u) => {
+          if (!u || typeof u !== 'string') return null;
+          const s = u.trim().replace(/\\\//g, '/');
+          if (!s) return null;
+          if (s.startsWith('//')) return `https:${s}`;
+          if (/^https?:\/\//i.test(s)) return s;
+          return null;
+        };
+        const pick = (payload) => {
+          if (!payload || typeof payload !== 'object') return null;
+          const fields = [payload.Video, payload.video, payload.Video_tmp, payload.video_tmp, payload.url, payload.stream, payload.ThirdParty];
+          for (const f of fields) {
+            const u = normalize(f);
+            if (u) return u;
+          }
+          return null;
+        };
+        const candidateUrls = [
+          `/api/DramaList/Episode/${epId}.png?kkey=${encodeURIComponent(kkey)}`,
+          `/api/DramaList/Episode/${epId}.png?err=false&ts=null&time=null&kkey=${encodeURIComponent(kkey)}`,
+        ];
+        for (const u of candidateUrls) {
+          try {
+            const r = await fetch(u, { credentials: 'include' });
+            if (!r.ok) continue;
+            const txt = await r.text();
+            const json = JSON.parse(txt);
+            const found = pick(json);
+            if (found) return found;
+          } catch (_) {
+            // Try next URL variant.
+          }
+        }
+        return null;
+      }, { epId: String(episodeId), kkey: EPISODE_KKEY }).catch(() => null);
+
+      if (browserPngUrl) {
+        streamUrl = browserPngUrl;
+        log.info(`browser page fetch resolved .png stream: ${browserPngUrl.slice(0, 120)}`);
+      }
+    }
+
     // Give the video player 3s to start loading after the DOM is ready,
     // then nudge common player controls to trigger lazy stream requests.
     await page.evaluate(() => {

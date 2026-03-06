@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [1.6.5] — 2026-03-06
+
+### Fixed
+- **Bypass 403 `.png` nel fallback browser** — dopo il load pagina, il resolver effettua una fetch della `.png` direttamente nel contesto browser (cookie/challenge live), estraendo `Video/Video_tmp` anche quando le chiamate server-side ricevono `403`.
+- Migliorata la resilienza di estrazione stream per episodi che non emettono subito richieste `.m3u8` in rete.
+
+---
+
 ## [1.6.4] — 2026-03-06
 
 ### Fixed
