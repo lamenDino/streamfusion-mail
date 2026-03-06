@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [1.5.9] — 2026-03-06
+
+### Changed
+- **Stream path ottimizzato per Vercel/Browserless** — quando `BROWSERLESS_URL` è configurato, il ramo FlareSolverr stream viene saltato (evita timeout inutili) e viene data priorità all'estrazione browser reale.
+- Timeout browser fallback portato da `20s` a `32s` per aumentare la probabilità di intercettare `.m3u8` su episodi più lenti.
+
+---
+
 ## [1.5.8] — 2026-03-06
 
 ### Fixed

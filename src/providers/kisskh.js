@@ -562,13 +562,13 @@ async function getStreams(stremioId, config = {}) {
     if (!rawUrl) {
       // 3. Fallback: browser extraction (intercepts m3u8 via Puppeteer)
       log.info('heuristic fallback unavailable, trying browser extraction', { serieId, episodeId });
-      const BROWSER_STREAM_TIMEOUT = 20_000;
+      const BROWSER_STREAM_TIMEOUT = 32_000;
       const browserResult = await withTimeout(
         _extractStreamAndSubs(serieId, episodeId),
         BROWSER_STREAM_TIMEOUT,
         'kisskh.browserStreamExtraction'
       ).catch(() => {
-        log.warn('browser stream extraction timed out (20s cap)', { serieId, episodeId });
+        log.warn('browser stream extraction timed out (32s cap)', { serieId, episodeId });
         return { streamUrl: null, subApiUrl: null };
       });
       const { streamUrl: extractedUrl, subApiUrl } = browserResult;
@@ -928,7 +928,8 @@ async function _fetchStreamViaApi(serieId, episodeId, proxyUrl) {
   //   NOTE: CF Worker was tested here but kisskh.co CF Bot Management blocks
   //   Cloudflare Worker IPs (all datacenter IPs, including CF-origin ones).
   //   FlareSolverr (real Chromium browser) remains the reliable CF bypass.
-  if (getFlareSolverrUrl()) {
+  const hasBrowserless = !!(process.env.BROWSERLESS_URL || '').trim();
+  if (getFlareSolverrUrl() && !hasBrowserless) {
     const FS_STREAM_TIMEOUT = 15_000; // ms hard cap — reduced to leave more time for Puppeteer fallback
     const fsResult = await Promise.race([
       (async () => {
@@ -983,6 +984,8 @@ async function _fetchStreamViaApi(serieId, episodeId, proxyUrl) {
 
     if (fsResult) return fsResult;
     log.info('FlareSolverr stream failed/timed out — trying direct axios fallback');
+  } else if (getFlareSolverrUrl() && hasBrowserless) {
+    log.info('skipping FlareSolverr stream path because BROWSERLESS_URL is configured');
   }
 
   // ── 2. Direct axios with proxy (api.kisskh.co is reachable without CF cookie) ──
