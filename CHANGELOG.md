@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [1.5.8] — 2026-03-06
+
+### Fixed
+- **Browser fallback non intercettava alcuni flussi `.m3u8`** — l'handler Puppeteer abortiva le richieste `resourceType=media` prima del controllo URL, quindi su alcuni episodi KissKH il flusso non veniva mai catturato. Ora l'intercettazione `.m3u8` avviene prima delle regole di abort, e le richieste media non-m3u8 restano bloccate.
+
+---
+
 ## [1.5.7] — 2026-03-06
 
 ### Changed

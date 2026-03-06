@@ -1093,25 +1093,31 @@ async function _extractStreamAndSubs(serieId, episodeId) {
     await page.setRequestInterception(true);
     page.on('request', req => {
       const rt = req.resourceType();
-      if (['image', 'font', 'stylesheet', 'media'].includes(rt)) {
-        req.abort().catch(() => {});
-        return;
-      }
       const u = req.url();
-      // Log XHR/fetch for debugging
-      if (!streamUrl && (rt === 'xhr' || rt === 'fetch')) {
-        log.debug(`[intercept] ${rt} ${u.slice(0, 120)}`);
-      }
-      // Intercept HLS stream — prefer URLs with ?v= (kisskh CDN token), fall back to any .m3u8
+
+      // Intercept HLS stream as early as possible, before any abort rules.
+      // Some episodes request m3u8 as resourceType=media.
       if (!streamUrl && /\.m3u8(\?.*)?$/i.test(u)) {
         streamUrl = u;
-        const hasV  = /[?&]v=[a-zA-Z0-9]+/.test(u);
+        const hasV  = /[?&]v=[a-zA-Z0-9_-]+/.test(u);
         log.info(`intercepted stream (hasVParam=${hasV}): ${u.slice(0, 120)}`);
       }
+
       // Intercept subtitle API endpoint
       if (!subApiUrl && u.includes('/api/Sub/')) {
         subApiUrl = u;
         log.debug(`intercepted sub API: ${u.slice(0, 120)}`);
+      }
+
+      // Block heavy resources, but never abort m3u8 requests.
+      if (['image', 'font', 'stylesheet'].includes(rt) || (rt === 'media' && !/\.m3u8(\?.*)?$/i.test(u))) {
+        req.abort().catch(() => {});
+        return;
+      }
+
+      // Log XHR/fetch for debugging
+      if (!streamUrl && (rt === 'xhr' || rt === 'fetch')) {
+        log.debug(`[intercept] ${rt} ${u.slice(0, 120)}`);
       }
       req.continue().catch(() => {});
     });
