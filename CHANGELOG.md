@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [1.6.2] — 2026-03-06
+
+### Fixed
+- **KissKH stream candidate validation piu tollerante** — il resolver ora testa sia URL raw che URL tokenizzati (`?v=`) per evitare falsi negativi quando il token non e necessario o non e valido per quell'episodio.
+- **Parsing `.png` esteso** — oltre a `Video` supporta anche `Video_tmp`, `ThirdParty`, `url`, `stream` e URL protocol-relative (`//...`) con normalizzazione automatica.
+- **Browser fallback piu robusto** — se la pagina non emette subito la richiesta `.m3u8`, il browser intercetta la risposta JSON di `/Episode/{id}.png` e usa direttamente il campo video come stream candidate.
+- **Probe HLS piu realistico** — aggiunti header `Referer/Origin/UA` nel controllo di playability per ridurre casi di `streams=0` dovuti a check troppo strict lato CDN.
+
+---
+
 ## [1.6.1] — 2026-03-06
 
 ### Fixed

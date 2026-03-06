@@ -536,8 +536,9 @@ async function getStreams(stremioId, config = {}) {
 
     if (apiResult && apiResult.streamUrl) {
       const token = await getVTokenLazy();
-      const apiCandidates = [apiResult.streamUrl, ...(apiResult.altUrls || [])]
-        .map(u => _withVToken(u, token))
+      const rawApiCandidates = [apiResult.streamUrl, ...(apiResult.altUrls || [])].filter(Boolean);
+      const tokenizedApiCandidates = rawApiCandidates.map(u => _withVToken(u, token));
+      const apiCandidates = [...new Set([...rawApiCandidates, ...tokenizedApiCandidates])]
         .filter(Boolean);
       for (const candidate of apiCandidates) {
         if (await _isLikelyPlayableHls(candidate, config.proxyUrl)) {
@@ -555,7 +556,13 @@ async function getStreams(stremioId, config = {}) {
       const htmlStream = await _fetchStreamFromEpisodeHtml(serieId, episodeId, config.proxyUrl);
       if (htmlStream && htmlStream.startsWith('http')) {
         const token = await getVTokenLazy();
-        rawUrl = _withVToken(htmlStream, token);
+        const htmlCandidates = [...new Set([htmlStream, _withVToken(htmlStream, token)].filter(Boolean))];
+        for (const candidate of htmlCandidates) {
+          if (await _isLikelyPlayableHls(candidate, config.proxyUrl)) {
+            rawUrl = candidate;
+            break;
+          }
+        }
         subtitles = await _getSubtitlesFromApiUrl(`${API_BASE}/Sub/${episodeId}?kkey=${SUB_KKEY}`, serieId, episodeId);
       }
     }
@@ -758,6 +765,10 @@ async function _isLikelyPlayableHls(url, proxyUrl) {
   const proxyConfig = proxyAgent ? { httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false } : {};
   try {
     const resp = await axios.get(url, {
+      headers: {
+        ..._baseHeaders(),
+        'Accept': 'application/vnd.apple.mpegurl, application/x-mpegURL, text/plain, */*',
+      },
       timeout: 6_000,
       responseType: 'text',
       maxContentLength: 256 * 1024,
@@ -837,6 +848,15 @@ async function _fetchStreamViaPngApi(episodeId, proxyUrl) {
   const proxyAgent = proxyUrl ? makeProxyAgent(proxyUrl) : getProxyAgent();
   const proxyConfig = proxyAgent ? { httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false } : {};
 
+  const normalizeCandidateUrl = (u) => {
+    if (!u || typeof u !== 'string') return null;
+    const s = u.trim().replace(/\\\//g, '/');
+    if (!s) return null;
+    if (s.startsWith('//')) return `https:${s}`;
+    if (/^https?:\/\//i.test(s)) return s;
+    return null;
+  };
+
   const parsePngPayload = (payload) => {
     let json = payload;
     if (Buffer.isBuffer(payload)) {
@@ -846,9 +866,14 @@ async function _fetchStreamViaPngApi(episodeId, proxyUrl) {
       try { json = JSON.parse(json); } catch { return null; }
     }
     if (!json || typeof json !== 'object') return null;
-    const videoUrl = json.Video || json.video;
-    if (!videoUrl || !videoUrl.startsWith('http')) return null;
-    return { streamUrl: videoUrl, subApiUrl: `${API_BASE}/Sub/${episodeId}?kkey=${SUB_KKEY}` };
+    const rawCandidates = [json.Video, json.video, json.Video_tmp, json.video_tmp, json.url, json.stream, json.ThirdParty];
+    const videoCandidates = [...new Set(rawCandidates.map(normalizeCandidateUrl).filter(Boolean))];
+    if (!videoCandidates.length) return null;
+    return {
+      streamUrl: videoCandidates[0],
+      altUrls: videoCandidates.slice(1),
+      subApiUrl: `${API_BASE}/Sub/${episodeId}?kkey=${SUB_KKEY}`,
+    };
   };
 
   // Try CF Worker first if available (often bypasses anti-bot checks for this endpoint)
@@ -1119,6 +1144,23 @@ async function _extractStreamAndSubs(serieId, episodeId) {
 
     // Block heavy resources; intercept m3u8 + sub API
     await page.setRequestInterception(true);
+    const normalizeCandidateUrl = (u) => {
+      if (!u || typeof u !== 'string') return null;
+      const s = u.trim().replace(/\\\//g, '/');
+      if (!s) return null;
+      if (s.startsWith('//')) return `https:${s}`;
+      if (/^https?:\/\//i.test(s)) return s;
+      return null;
+    };
+
+    const pickVideoFromPayload = (payload) => {
+      if (!payload || typeof payload !== 'object') return null;
+      const candidates = [payload.Video, payload.video, payload.Video_tmp, payload.video_tmp, payload.url, payload.stream, payload.ThirdParty]
+        .map(normalizeCandidateUrl)
+        .filter(Boolean);
+      return candidates.length ? candidates[0] : null;
+    };
+
     page.on('request', req => {
       const rt = req.resourceType();
       const u = req.url();
@@ -1148,6 +1190,24 @@ async function _extractStreamAndSubs(serieId, episodeId) {
         log.debug(`[intercept] ${rt} ${u.slice(0, 120)}`);
       }
       req.continue().catch(() => {});
+    });
+
+    // Some episodes fetch stream JSON via .png but delay the actual m3u8 request.
+    page.on('response', async (res) => {
+      if (streamUrl) return;
+      const u = res.url();
+      if (!/\/api\/DramaList\/Episode\/\d+\.png/i.test(u)) return;
+      try {
+        const txt = await res.text();
+        const data = JSON.parse(txt);
+        const found = pickVideoFromPayload(data);
+        if (found) {
+          streamUrl = found;
+          log.info(`intercepted stream from .png response: ${found.slice(0, 120)}`);
+        }
+      } catch {
+        // Ignore parse errors from non-JSON responses.
+      }
     });
 
     const targetUrl = `${SITE_BASE}/Drama/Any/Episode-Any?id=${serieId}&ep=${episodeId}`;
