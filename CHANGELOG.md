@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [1.6.0] — 2026-03-06
+
+### Changed
+- **Ottimizzazione budget timeout stream** — `getMeta` e l'estrazione token `v=` ora sono lazy (on-demand) invece che sempre upfront. Questo lascia più tempo utile al percorso stream reale (API/HTML/browser) dentro i limiti serverless di Vercel.
+- Migliorata la priorità delle operazioni nel ramo stream per ridurre i casi `streams: []` causati da timeout cumulativi.
+
+---
+
 ## [1.5.9] — 2026-03-06
 
 ### Changed

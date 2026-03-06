@@ -500,11 +500,25 @@ async function getStreams(stremioId, config = {}) {
     return [];
   }
 
-  // Fetch series title for display (typically instant from metaCache)
-  const metaResult = await getMeta(seriesPart, config).catch(() => ({ meta: null }));
-  const seriesTitle = metaResult?.meta?.name || null;
-  const episodeNumHint = _episodeNumberFromMeta(metaResult?.meta?.videos, episodeId);
-  const vToken = await _extractVTokenFromEpisodeAssets(serieId, episodeId, config.proxyUrl);
+  // Lazily fetch heavy helpers only when needed to preserve stream timeout budget.
+  let _metaLoaded = false;
+  let _meta = null;
+  const getMetaLazy = async () => {
+    if (_metaLoaded) return _meta;
+    _metaLoaded = true;
+    const metaResult = await getMeta(seriesPart, config).catch(() => ({ meta: null }));
+    _meta = metaResult?.meta || null;
+    return _meta;
+  };
+
+  let _vTokenLoaded = false;
+  let _vToken = null;
+  const getVTokenLazy = async () => {
+    if (_vTokenLoaded) return _vToken;
+    _vTokenLoaded = true;
+    _vToken = await _extractVTokenFromEpisodeAssets(serieId, episodeId, config.proxyUrl);
+    return _vToken;
+  };
 
   const cacheKey = `stream:${serieId}:${episodeId}`;
   const cached = streamCache.get(cacheKey);
@@ -521,8 +535,9 @@ async function getStreams(stremioId, config = {}) {
     const apiResult = await _fetchStreamViaApi(serieId, episodeId, config.proxyUrl);
 
     if (apiResult && apiResult.streamUrl) {
+      const token = await getVTokenLazy();
       const apiCandidates = [apiResult.streamUrl, ...(apiResult.altUrls || [])]
-        .map(u => _withVToken(u, vToken))
+        .map(u => _withVToken(u, token))
         .filter(Boolean);
       for (const candidate of apiCandidates) {
         if (await _isLikelyPlayableHls(candidate, config.proxyUrl)) {
@@ -539,22 +554,26 @@ async function getStreams(stremioId, config = {}) {
       log.info('direct API failed, trying HTML stream extraction fallback', { serieId, episodeId });
       const htmlStream = await _fetchStreamFromEpisodeHtml(serieId, episodeId, config.proxyUrl);
       if (htmlStream && htmlStream.startsWith('http')) {
-        rawUrl = _withVToken(htmlStream, vToken);
+        const token = await getVTokenLazy();
+        rawUrl = _withVToken(htmlStream, token);
         subtitles = await _getSubtitlesFromApiUrl(`${API_BASE}/Sub/${episodeId}?kkey=${SUB_KKEY}`, serieId, episodeId);
       }
     }
 
     if (!rawUrl) {
+      const meta = await getMetaLazy();
+      const episodeNumHint = _episodeNumberFromMeta(meta?.videos, episodeId);
       const predicted = _predictHlsUrl(serieId, episodeNumHint);
       if (predicted) {
-        const tokenizedPredicted = _withVToken(predicted, vToken);
+        const token = await getVTokenLazy();
+        const tokenizedPredicted = _withVToken(predicted, token);
         const ok = await _isLikelyPlayableHls(tokenizedPredicted, config.proxyUrl);
         if (ok) {
           rawUrl = tokenizedPredicted;
           subtitles = await _getSubtitlesFromApiUrl(`${API_BASE}/Sub/${episodeId}?kkey=${SUB_KKEY}`, serieId, episodeId);
-          log.warn('using heuristic predicted HLS URL fallback', { serieId, episodeId, episodeNumHint, hasVToken: !!vToken, url: tokenizedPredicted.slice(0, 90) });
+          log.warn('using heuristic predicted HLS URL fallback', { serieId, episodeId, episodeNumHint, hasVToken: !!token, url: tokenizedPredicted.slice(0, 90) });
         } else {
-          log.warn('heuristic predicted HLS URL is not playable', { serieId, episodeId, episodeNumHint, hasVToken: !!vToken, url: tokenizedPredicted.slice(0, 90) });
+          log.warn('heuristic predicted HLS URL is not playable', { serieId, episodeId, episodeNumHint, hasVToken: !!token, url: tokenizedPredicted.slice(0, 90) });
         }
       }
     }
@@ -606,6 +625,8 @@ async function getStreams(stremioId, config = {}) {
     'Origin': SITE_BASE,
   });
 
+  const metaForTitle = _metaLoaded ? _meta : null;
+  const seriesTitle = metaForTitle?.name || null;
   const displayTitle = seriesTitle ? seriesTitle.replace(/\s*\(\d{4}\)\s*$/, '').trim() : null;
   const titleLine = displayTitle
     ? `📁 ${displayTitle} - Episode ${episodeId}`
