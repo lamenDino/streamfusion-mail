@@ -5,6 +5,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [1.5.6] — 2026-03-06
+
+### Added
+- **Estrazione token reale `v=` da player script** — il provider KissKH ora analizza la pagina episodio e i bundle JS collegati per cercare il token usato negli URL HLS (`?v=...`).
+
+### Changed
+- Quando un URL stream non contiene `v=`, il token estratto viene applicato automaticamente (`_withVToken`) prima della validazione playability.
+- Fallback predittivo/HTML ora beneficia dello stesso token reale invece di restituire link non firmati.
+
+---
+
 ## [1.5.5] — 2026-03-06
 
 ### Fixed

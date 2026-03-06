@@ -504,6 +504,7 @@ async function getStreams(stremioId, config = {}) {
   const metaResult = await getMeta(seriesPart, config).catch(() => ({ meta: null }));
   const seriesTitle = metaResult?.meta?.name || null;
   const episodeNumHint = _episodeNumberFromMeta(metaResult?.meta?.videos, episodeId);
+  const vToken = await _extractVTokenFromEpisodeAssets(serieId, episodeId, config.proxyUrl);
 
   const cacheKey = `stream:${serieId}:${episodeId}`;
   const cached = streamCache.get(cacheKey);
@@ -520,14 +521,14 @@ async function getStreams(stremioId, config = {}) {
     const apiResult = await _fetchStreamViaApi(serieId, episodeId, config.proxyUrl);
 
     if (apiResult && apiResult.streamUrl) {
-      rawUrl     = apiResult.streamUrl;
+      rawUrl     = _withVToken(apiResult.streamUrl, vToken);
       subtitles  = await _getSubtitlesFromApiUrl(apiResult.subApiUrl, serieId, episodeId);
     } else {
       // 2. Fallback: parse episode HTML for embedded m3u8 URLs (fast, no browser)
       log.info('direct API failed, trying HTML stream extraction fallback', { serieId, episodeId });
       const htmlStream = await _fetchStreamFromEpisodeHtml(serieId, episodeId, config.proxyUrl);
       if (htmlStream && htmlStream.startsWith('http')) {
-        rawUrl = htmlStream;
+        rawUrl = _withVToken(htmlStream, vToken);
         subtitles = await _getSubtitlesFromApiUrl(`${API_BASE}/Sub/${episodeId}?kkey=${SUB_KKEY}`, serieId, episodeId);
       }
     }
@@ -535,13 +536,14 @@ async function getStreams(stremioId, config = {}) {
     if (!rawUrl) {
       const predicted = _predictHlsUrl(serieId, episodeNumHint);
       if (predicted) {
-        const ok = await _isLikelyPlayableHls(predicted, config.proxyUrl);
+        const tokenizedPredicted = _withVToken(predicted, vToken);
+        const ok = await _isLikelyPlayableHls(tokenizedPredicted, config.proxyUrl);
         if (ok) {
-          rawUrl = predicted;
+          rawUrl = tokenizedPredicted;
           subtitles = await _getSubtitlesFromApiUrl(`${API_BASE}/Sub/${episodeId}?kkey=${SUB_KKEY}`, serieId, episodeId);
-          log.warn('using heuristic predicted HLS URL fallback', { serieId, episodeId, episodeNumHint, url: predicted.slice(0, 90) });
+          log.warn('using heuristic predicted HLS URL fallback', { serieId, episodeId, episodeNumHint, hasVToken: !!vToken, url: tokenizedPredicted.slice(0, 90) });
         } else {
-          log.warn('heuristic predicted HLS URL is not playable', { serieId, episodeId, episodeNumHint, url: predicted.slice(0, 90) });
+          log.warn('heuristic predicted HLS URL is not playable', { serieId, episodeId, episodeNumHint, hasVToken: !!vToken, url: tokenizedPredicted.slice(0, 90) });
         }
       }
     }
@@ -623,6 +625,99 @@ function _predictHlsUrl(serieId, episodeNum) {
   if (!serieId || !episodeNum) return null;
   // Common KissKH pattern observed in production/local captures
   return `https://hls.cdnvideo11.shop/hls07/${serieId}/Ep${episodeNum}_index.m3u8`;
+}
+
+function _withVToken(url, token) {
+  if (!url || !url.startsWith('http') || !token) return url;
+  try {
+    const u = new URL(url);
+    if (!u.searchParams.get('v')) {
+      u.searchParams.set('v', token);
+    }
+    return u.toString();
+  } catch {
+    const sep = url.includes('?') ? '&' : '?';
+    return `${url}${sep}v=${encodeURIComponent(token)}`;
+  }
+}
+
+async function _extractVTokenFromEpisodeAssets(serieId, episodeId, proxyUrl) {
+  const episodeUrl = `${SITE_BASE}/Drama/Any/Episode-Any?id=${serieId}&ep=${episodeId}`;
+  const proxyAgent = proxyUrl ? makeProxyAgent(proxyUrl) : getProxyAgent();
+  const proxyConfig = proxyAgent ? { httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false } : {};
+
+  const tokenFromText = (text) => {
+    if (!text) return null;
+    const s = String(text);
+
+    // 1) Explicit m3u8 with ?v=<token>
+    const m3u8WithV = s.match(/\.m3u8[^"'\s<>]*[?&]v=([a-zA-Z0-9_-]{6,})/i);
+    if (m3u8WithV?.[1]) return m3u8WithV[1];
+
+    // 2) Generic token assignments used by player/runtime bundles
+    const patterns = [
+      /[?&]v=([a-zA-Z0-9_-]{6,})/i,
+      /\bv\s*[:=]\s*['"]([a-zA-Z0-9_-]{6,})['"]/i,
+      /\btoken\s*[:=]\s*['"]([a-zA-Z0-9_-]{6,})['"]/i,
+      /\bvideoToken\s*[:=]\s*['"]([a-zA-Z0-9_-]{6,})['"]/i,
+    ];
+    for (const re of patterns) {
+      const m = s.match(re);
+      if (m?.[1]) return m[1];
+    }
+    return null;
+  };
+
+  try {
+    const { data } = await axios.get(episodeUrl, {
+      headers: {
+        ..._baseHeaders(),
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+      timeout: 10_000,
+      ...proxyConfig,
+    });
+    const html = String(data || '');
+    if (!html) return null;
+
+    // Check inline page source first.
+    const inlineToken = tokenFromText(html);
+    if (inlineToken) {
+      log.info('v-token found in episode HTML', { episodeId, tokenPrefix: inlineToken.slice(0, 6) });
+      return inlineToken;
+    }
+
+    // Then fetch a limited set of JS bundles referenced by the page.
+    const scriptUrls = [...html.matchAll(/<script[^>]+src=["']([^"']+)["'][^>]*>/gi)]
+      .map(m => m[1])
+      .map(src => src.startsWith('http') ? src : new URL(src, SITE_BASE).toString())
+      .filter(u => /\.(js)(\?|$)/i.test(u))
+      .slice(0, 10);
+
+    for (const scriptUrl of scriptUrls) {
+      try {
+        const { data: js } = await axios.get(scriptUrl, {
+          headers: { ..._baseHeaders(), 'Accept': '*/*', 'Referer': episodeUrl },
+          timeout: 8_000,
+          responseType: 'text',
+          ...proxyConfig,
+        });
+        const token = tokenFromText(js);
+        if (token) {
+          log.info('v-token found in player script', { episodeId, script: scriptUrl.slice(0, 80), tokenPrefix: token.slice(0, 6) });
+          return token;
+        }
+      } catch {
+        // Continue with other script candidates.
+      }
+    }
+
+    log.warn('v-token not found in episode assets', { episodeId });
+    return null;
+  } catch (err) {
+    log.warn(`v-token extraction failed: ${err.message}`, { episodeId });
+    return null;
+  }
 }
 
 async function _isLikelyPlayableHls(url, proxyUrl) {
