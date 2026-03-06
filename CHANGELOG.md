@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [1.6.7] — 2026-03-06
+
+### Fixed
+- **KissKH "No metadata was found" intermittente** — `getMeta` ora usa fallback multi-mirror per i dettagli serie (`DramaList/Drama`) e cast (`DramaList/Cast`), provando sia `kisskh.do` che `kisskh.co` prima di ritornare `meta: null`.
+- **Retry robusto con bypass CF** — se il fast-path JSON fallisce, `getMeta` ritenta automaticamente con catena CF Worker/FlareSolverr, riducendo i casi in cui Stremio apre la card ma non riceve metadati.
+
+---
+
 ## [1.6.6] — 2026-03-06
 
 ### Fixed

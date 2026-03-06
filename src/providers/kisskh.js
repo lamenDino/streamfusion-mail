@@ -430,17 +430,36 @@ async function getMeta(id, config = {}) {
   }
 
   const serieId = id.replace(/^kisskh_/, '');
-  const url = `${API_BASE}/DramaList/Drama/${serieId}?isq=false`;
-  log.info('fetching meta', { id, url });
+  const dramaUrls = [
+    `${API_BASE}/DramaList/Drama/${serieId}?isq=false`,
+    `https://kisskh.co/api/DramaList/Drama/${serieId}?isq=false`,
+  ];
+  const castUrls = [
+    `${API_BASE}/DramaList/Cast/${serieId}`,
+    `https://kisskh.co/api/DramaList/Cast/${serieId}`,
+  ];
+  log.info('fetching meta', { id, url: dramaUrls[0] });
 
   try {
-    // Fetch drama detail and cast in parallel
-    // skipFlare=true: DramaList/Drama and DramaList/Cast are plain JSON endpoints —
-    // not CF-protected from Vercel datacenter IPs, so Worker+FlareSolverr not needed.
-    const [data, castData] = await Promise.all([
-      _apiGet(url, 8_000, config.proxyUrl, config.clientIp, true),
-      _apiGet(`${API_BASE}/DramaList/Cast/${serieId}`, 6_000, config.proxyUrl, config.clientIp, true).catch(() => null),
-    ]);
+    const fetchFirst = async (urls, timeout, skipFlare = true) => {
+      for (const u of urls) {
+        const data = await _apiGet(u, timeout, config.proxyUrl, config.clientIp, skipFlare).catch(() => null);
+        if (data) return data;
+      }
+      return null;
+    };
+
+    // Fast path first: plain JSON endpoints usually work without CF bypass.
+    let data = await fetchFirst(dramaUrls, 8_000, true);
+    let castData = await fetchFirst(castUrls, 6_000, true);
+
+    // Slow fallback only if drama detail failed: allow Worker/FlareSolverr chain.
+    if (!data) {
+      log.warn('meta drama fast-path failed, retrying with CF bypass', { id, serieId });
+      data = await fetchFirst(dramaUrls, 10_000, false);
+      if (!castData) castData = await fetchFirst(castUrls, 8_000, false);
+    }
+
     if (!data) return { meta: null };
 
     const meta = _buildMeta(id, serieId, data, castData);
